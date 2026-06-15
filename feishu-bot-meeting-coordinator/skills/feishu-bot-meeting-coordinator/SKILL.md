@@ -93,7 +93,7 @@ python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py search-
 ```
 
 **Credentials and Config**:
-- Credentials are loaded from the active Hermes/Semantier runtime environment or runtime `.env` files
+- Credentials are loaded from the active Hermes/Semantier governed SQLite auth store
 - Workspace config such as timezone and organizer identity should come from the active runtime config
 - You do NOT ask users to verify environment variables or provide secrets in chat
 

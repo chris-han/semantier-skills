@@ -44,8 +44,8 @@ The bundled marketplace index in this workspace is already pinned to `chris-han/
 
 ## Runtime Notes
 
-- The helper expects Feishu credentials from the active Hermes/Semantier runtime environment.
-- The helper also attempts to load `.env` from `$HERMES_HOME` or `$SEMANTIER_LOCAL_STATE_DIR` when those are present.
+- The helper expects the active Hermes/Semantier runtime to store Feishu bot configuration in the governed SQLite auth store.
+- The helper resolves credentials from `$SEMANTIER_LOCAL_STATE_DIR/auth.db` or `$SEMANTIER_AUTH_DB_PATH`, scoped by `$SEMANTIER_WORKSPACE_ID` or `$SEMANTIER_USER_ID`.
 - The skill defaults user-facing timezone behavior to `Asia/Shanghai`.
 
 ## Publish Checklist

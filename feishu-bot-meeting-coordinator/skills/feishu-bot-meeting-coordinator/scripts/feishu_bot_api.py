@@ -29,11 +29,10 @@ USAGE:
       search-chats --query "管理层群"
 
 CREDENTIAL LOADING:
-    This script first respects already-exported environment variables, then tries
-    runtime-owned .env files such as $HERMES_HOME/.env or
-    $SEMANTIER_LOCAL_STATE_DIR/.env, and finally falls back to nearby .env files
-    when running from a checked-out repo. Do NOT store hardcoded API keys or
-    paths in this file.
+    This script reads the active workspace's Feishu bot configuration from the
+    governed SQLite auth store under $SEMANTIER_LOCAL_STATE_DIR/auth.db (or the
+    explicit $SEMANTIER_AUTH_DB_PATH override). Do NOT store hardcoded API keys
+    or paths in this file.
 """
 
 from __future__ import annotations
@@ -41,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -85,66 +85,68 @@ DEFAULT_NEGOTIATION_ROUNDS = 3
 _client_instance: Client | None = None
 
 
-def _load_env_file(path: Path) -> None:
+def _runtime_value(name: str) -> str:
+    return (os.getenv(name) or "").strip()
+
+
+def _auth_db_path() -> Path:
+    explicit = _runtime_value("SEMANTIER_AUTH_DB_PATH")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+
+    runtime_root = _runtime_value("SEMANTIER_LOCAL_STATE_DIR")
+    if runtime_root:
+        return (Path(runtime_root).expanduser().resolve() / "auth.db")
+
+    raise FeishuSkillError(
+        "Semantier auth DB path is unavailable; expected SEMANTIER_LOCAL_STATE_DIR or SEMANTIER_AUTH_DB_PATH"
+    )
+
+
+def _resolve_runtime_feishu_config() -> dict[str, Any]:
+    workspace_id = _runtime_value("SEMANTIER_WORKSPACE_ID")
+    user_id = _runtime_value("SEMANTIER_USER_ID")
+    if not workspace_id and not user_id:
+        raise FeishuSkillError(
+            "Semantier workspace or user identity is unavailable; expected SEMANTIER_WORKSPACE_ID or SEMANTIER_USER_ID"
+        )
+
+    db_path = _auth_db_path()
+    if not db_path.exists():
+        raise FeishuSkillError(f"Semantier auth DB not found: {db_path}")
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return
+        row = None
+        if workspace_id:
+            row = conn.execute(
+                """
+                SELECT payload_json FROM feishu_bot_configs
+                WHERE owner_workspace_id=?
+                ORDER BY updated_at DESC, owner_user_id
+                LIMIT 1
+                """,
+                (workspace_id,),
+            ).fetchone()
+        if row is None and user_id:
+            row = conn.execute(
+                "SELECT payload_json FROM feishu_bot_configs WHERE owner_user_id=?",
+                (user_id,),
+            ).fetchone()
+    finally:
+        conn.close()
 
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[7:].strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key or key in os.environ:
-            continue
-        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-            value = value[1:-1]
-        elif " #" in value:
-            value = value.split(" #", 1)[0].rstrip()
-        os.environ[key] = value
+    if row is None:
+        detail = workspace_id or user_id or "unknown"
+        raise FeishuSkillError(
+            f"No governed Feishu bot configuration found for runtime identity: {detail}"
+        )
 
-
-def _bootstrap_env() -> None:
-    if (os.getenv("FEISHU_APP_ID") or "").strip() and (os.getenv("FEISHU_APP_SECRET") or "").strip():
-        return
-
-    script_path = Path(__file__).resolve()
-    candidate_env_paths: list[Path] = []
-
-    for env_var in ("HERMES_HOME", "SEMANTIER_LOCAL_STATE_DIR"):
-        raw_root = (os.getenv(env_var) or "").strip()
-        if not raw_root:
-            continue
-        candidate_env_paths.append(Path(raw_root).expanduser().resolve() / ".env")
-
-    for parent in [script_path, *script_path.parents]:
-        candidate_env_paths.append(parent / ".env")
-        if parent.name == "agent" and parent.is_dir():
-            candidate_env_paths.append(parent / ".env")
-            break
-
-    seen_paths: set[Path] = set()
-    for candidate in candidate_env_paths:
-        try:
-            resolved = candidate.resolve()
-        except OSError:
-            continue
-        if resolved in seen_paths or not resolved.is_file():
-            continue
-        seen_paths.add(resolved)
-        _load_env_file(resolved)
-        if (os.getenv("FEISHU_APP_ID") or "").strip() and (os.getenv("FEISHU_APP_SECRET") or "").strip():
-            return
-
-
-_bootstrap_env()
+    payload = json.loads(str(row["payload_json"]))
+    if not isinstance(payload, dict):
+        raise FeishuSkillError("Governed Feishu bot configuration payload is invalid")
+    return payload
 
 
 class FeishuSkillError(RuntimeError):
@@ -242,24 +244,25 @@ def _deserialize_negotiation_state(state_payload: dict[str, Any]) -> MeetingNego
 
 
 def _env(name: str) -> str:
-    value = (os.getenv(name) or "").strip()
+    value = _runtime_value(name)
     if not value:
-        # Provide helpful error message with debugging info
-        loaded_from_env = "FEISHU_APP_ID" in os.environ or "FEISHU_APP_SECRET" in os.environ
         error_msg = f"Missing required environment variable: {name}"
-        if not loaded_from_env:
-            error_msg += " (no Feishu credentials loaded from .env)"
         raise FeishuSkillError(error_msg)
     return value
 
 
 def _get_client() -> Client:
-    """Return a cached lark-oapi Client built from environment credentials."""
+    """Return a cached lark-oapi Client built from governed SQLite config."""
     global _client_instance
     if _client_instance is None:
-        app_id = _env("FEISHU_APP_ID")
-        app_secret = _env("FEISHU_APP_SECRET")
-        domain = (os.getenv("FEISHU_DOMAIN") or "feishu").strip().lower()
+        config = _resolve_runtime_feishu_config()
+        app_id = str(config.get("app_id") or "").strip()
+        app_secret = str(config.get("app_secret") or "").strip()
+        domain = str(config.get("domain") or "feishu").strip().lower() or "feishu"
+        if not app_id or not app_secret:
+            raise FeishuSkillError(
+                "Governed Feishu bot configuration is missing app_id or app_secret"
+            )
         base_url = "https://open.larksuite.com" if domain == "lark" else "https://open.feishu.cn"
         _client_instance = (
             Client.builder()
