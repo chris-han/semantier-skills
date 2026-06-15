@@ -57,6 +57,8 @@ from lark_oapi.api.calendar.v4 import (
     CreateCalendarEventRequestBuilder,
     EventLocationBuilder,
     EventOrganizerBuilder,
+    ListCalendarEventAttendeeRequestBuilder,
+    PatchCalendarEventRequestBuilder,
     PrimaryCalendarRequestBuilder,
     PrimarysCalendarRequestBuilder,
     PrimarysCalendarRequestBodyBuilder,
@@ -814,6 +816,41 @@ def send_final_invitations(
     return {"delivered": delivered, "failed": failed}
 
 
+def send_attendee_message(
+    *,
+    attendee_open_ids: list[str],
+    message: str,
+) -> dict[str, Any]:
+    normalized_message = message.strip()
+    if not normalized_message:
+        raise FeishuSkillError("message is required")
+
+    content = json.dumps({"text": normalized_message}, ensure_ascii=False)
+    delivered: list[str] = []
+    failed: list[dict[str, str]] = []
+    client = _get_client()
+
+    for attendee_open_id in attendee_open_ids:
+        target = attendee_open_id.strip()
+        if not target:
+            continue
+        try:
+            body = (
+                CreateMessageRequestBodyBuilder()
+                .receive_id(target)
+                .msg_type("text")
+                .content(content)
+                .build()
+            )
+            req = CreateMessageRequestBuilder().receive_id_type("open_id").request_body(body).build()
+            _unwrap(client.im.v1.message.create(req))
+            delivered.append(target)
+        except FeishuSkillError as exc:
+            failed.append({"attendee_open_id": target, "error": str(exc)})
+
+    return {"delivered": delivered, "failed": failed}
+
+
 def finalize_negotiation_and_create_meeting(
     state_payload: dict[str, Any],
     *,
@@ -1175,6 +1212,227 @@ def create_meeting(
     }
 
 
+def _normalize_attendee_status(attendee: Any) -> dict[str, Any]:
+    chat_members: list[dict[str, Any]] = []
+    for member in _get_attr(attendee, "chat_members") or []:
+        chat_members.append(
+            {
+                "display_name": str(_get_attr(member, "display_name") or "").strip() or None,
+                "rsvp_status": str(_get_attr(member, "rsvp_status") or "").strip() or None,
+                "response_status": str(_get_attr(member, "rsvp_status") or "").strip() or None,
+                "is_optional": bool(_get_attr(member, "is_optional", False)),
+                "is_organizer": bool(_get_attr(member, "is_organizer", False)),
+                "is_external": bool(_get_attr(member, "is_external", False)),
+            }
+        )
+
+    rsvp_status = str(_get_attr(attendee, "rsvp_status") or "").strip() or None
+    user_id = str(_get_attr(attendee, "user_id") or "").strip() or None
+    chat_id = str(_get_attr(attendee, "chat_id") or "").strip() or None
+    room_id = str(_get_attr(attendee, "room_id") or "").strip() or None
+    third_party_email = str(_get_attr(attendee, "third_party_email") or "").strip() or None
+    return {
+        "type": str(_get_attr(attendee, "type") or "").strip() or None,
+        "attendee_id": str(_get_attr(attendee, "attendee_id") or "").strip() or None,
+        "user_id": user_id,
+        "message_user_id": user_id,
+        "chat_id": chat_id,
+        "room_id": room_id,
+        "third_party_email": third_party_email,
+        "display_name": str(_get_attr(attendee, "display_name") or "").strip() or None,
+        "rsvp_status": rsvp_status,
+        "response_status": rsvp_status,
+        "is_optional": bool(_get_attr(attendee, "is_optional", False)),
+        "is_organizer": bool(_get_attr(attendee, "is_organizer", False)),
+        "is_external": bool(_get_attr(attendee, "is_external", False)),
+        "chat_members": chat_members,
+    }
+
+
+def list_attendee_status(
+    *,
+    event_id: str,
+    calendar_id: str | None = None,
+    requester_open_id: str | None = None,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    normalized_event_id = event_id.strip()
+    if not normalized_event_id:
+        raise FeishuSkillError("event_id is required")
+
+    requester = (
+        requester_open_id
+        or (os.getenv("FEISHU_REQUESTER_OPEN_ID") or "").strip()
+        or None
+    )
+
+    candidate_calendar_ids: list[str] = []
+    if calendar_id and calendar_id.strip():
+        candidate_calendar_ids.append(calendar_id.strip())
+    if requester:
+        requester_calendar_id = _primary_calendar_id_for_user(requester)
+        if requester_calendar_id:
+            candidate_calendar_ids.append(requester_calendar_id)
+    try:
+        candidate_calendar_ids.append(_bot_calendar_id())
+    except FeishuSkillError:
+        if not candidate_calendar_ids:
+            raise
+
+    deduped_calendar_ids: list[str] = []
+    seen_calendar_ids: set[str] = set()
+    for candidate in candidate_calendar_ids:
+        normalized = candidate.strip()
+        if normalized and normalized not in seen_calendar_ids:
+            seen_calendar_ids.add(normalized)
+            deduped_calendar_ids.append(normalized)
+
+    if not deduped_calendar_ids:
+        raise FeishuSkillError(
+            "calendar_id is required when no requester or bot calendar can be resolved"
+        )
+
+    client = _get_client()
+    attempted: list[dict[str, Any]] = []
+    last_error: FeishuSkillError | None = None
+    bounded_page_size = min(max(page_size, 1), 100)
+
+    for candidate_calendar_id in deduped_calendar_ids:
+        attendees: list[dict[str, Any]] = []
+        page_token: str | None = None
+        try:
+            for _ in range(10):
+                builder = (
+                    ListCalendarEventAttendeeRequestBuilder()
+                    .calendar_id(candidate_calendar_id)
+                    .event_id(normalized_event_id)
+                    .user_id_type("open_id")
+                    .page_size(bounded_page_size)
+                )
+                if page_token:
+                    builder = builder.page_token(page_token)
+                data = _unwrap(client.calendar.v4.calendar_event_attendee.list(builder.build()))
+                attendees.extend(
+                    _normalize_attendee_status(item)
+                    for item in (_get_attr(data, "items") or [])
+                    if item is not None
+                )
+                if not _get_attr(data, "has_more", False):
+                    break
+                page_token = str(_get_attr(data, "page_token") or "").strip() or None
+                if not page_token:
+                    break
+        except FeishuSkillError as exc:
+            attempted.append(
+                {
+                    "calendar_id": candidate_calendar_id,
+                    "error": str(exc),
+                    "payload": exc.payload,
+                }
+            )
+            last_error = exc
+            continue
+
+        return {
+            "event_id": normalized_event_id,
+            "calendar_id": candidate_calendar_id,
+            "requester_open_id": requester,
+            "attendees": attendees,
+            "attempted_calendar_ids": attempted,
+        }
+
+    raise FeishuSkillError(
+        "Could not list attendee response status for event on any candidate calendar",
+        payload={
+            "event_id": normalized_event_id,
+            "attempted_calendar_ids": attempted,
+            "last_error": str(last_error) if last_error else None,
+        },
+    )
+
+
+def propose_new_time(
+    *,
+    attendee_open_ids: list[str],
+    title: str,
+    candidate_slots: list[str],
+    timezone: str = DEFAULT_TIMEZONE,
+    event_id: str | None = None,
+    current_time: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    normalized_title = title.strip()
+    if not normalized_title:
+        raise FeishuSkillError("title is required")
+    slots = [_parse_time(slot, timezone).strftime("%Y-%m-%d %H:%M") for slot in candidate_slots if slot.strip()]
+    if not slots:
+        raise FeishuSkillError("At least one candidate slot is required")
+
+    lines = [
+        f"会议改期协调: {normalized_title}",
+    ]
+    if event_id:
+        lines.append(f"事件 ID: {event_id}")
+    if current_time:
+        lines.append(f"当前时间: {current_time}")
+    lines.append(f"候选时间 ({timezone}):")
+    lines.extend(f"- {slot}" for slot in slots)
+    lines.append("请回复你可以参加的时间，或说明无法参加。")
+    if note:
+        lines.append(note.strip())
+
+    return send_attendee_message(
+        attendee_open_ids=attendee_open_ids,
+        message="\n".join(lines),
+    )
+
+
+def update_meeting_time(
+    *,
+    event_id: str,
+    calendar_id: str,
+    start_time: str,
+    end_time: str,
+    timezone: str = DEFAULT_TIMEZONE,
+) -> dict[str, Any]:
+    normalized_event_id = event_id.strip()
+    normalized_calendar_id = calendar_id.strip()
+    if not normalized_event_id:
+        raise FeishuSkillError("event_id is required")
+    if not normalized_calendar_id:
+        raise FeishuSkillError("calendar_id is required")
+
+    start_dt = _parse_time(start_time, timezone)
+    end_dt = _parse_time(end_time, timezone)
+    if end_dt <= start_dt:
+        raise FeishuSkillError("end_time must be later than start_time")
+
+    body = (
+        CalendarEventBuilder()
+        .need_notification(True)
+        .start_time(TimeInfoBuilder().timestamp(str(int(start_dt.timestamp()))).timezone(timezone).build())
+        .end_time(TimeInfoBuilder().timestamp(str(int(end_dt.timestamp()))).timezone(timezone).build())
+        .build()
+    )
+    req = (
+        PatchCalendarEventRequestBuilder()
+        .calendar_id(normalized_calendar_id)
+        .event_id(normalized_event_id)
+        .user_id_type("open_id")
+        .request_body(body)
+        .build()
+    )
+    data = _unwrap(_get_client().calendar.v4.calendar_event.patch(req))
+    event = _get_attr(data, "event")
+    return {
+        "event_id": normalized_event_id,
+        "calendar_id": normalized_calendar_id,
+        "start_time": _build_time_info(start_dt, timezone),
+        "end_time": _build_time_info(end_dt, timezone),
+        "event_status": str(_get_attr(event, "status") or "").strip() or None,
+    }
+
+
 def _build_cli() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Feishu bot meeting helper for the feishu-bot-meeting-coordinator skill")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1228,6 +1486,32 @@ def _build_cli() -> argparse.ArgumentParser:
     finalize_parser.add_argument("--state-json", required=True)
     finalize_parser.add_argument("--description")
     finalize_parser.add_argument("--location")
+
+    attendee_status_parser = subparsers.add_parser("list-attendee-status")
+    attendee_status_parser.add_argument("--event-id", required=True)
+    attendee_status_parser.add_argument("--calendar-id")
+    attendee_status_parser.add_argument("--requester-open-id")
+    attendee_status_parser.add_argument("--page-size", type=int, default=50)
+
+    attendee_message_parser = subparsers.add_parser("send-attendee-message")
+    attendee_message_parser.add_argument("--attendee-open-id", action="append", required=True, dest="attendee_open_ids")
+    attendee_message_parser.add_argument("--message", required=True)
+
+    propose_time_parser = subparsers.add_parser("propose-new-time")
+    propose_time_parser.add_argument("--title", required=True)
+    propose_time_parser.add_argument("--attendee-open-id", action="append", required=True, dest="attendee_open_ids")
+    propose_time_parser.add_argument("--candidate-slot", action="append", required=True, dest="candidate_slots")
+    propose_time_parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
+    propose_time_parser.add_argument("--event-id")
+    propose_time_parser.add_argument("--current-time")
+    propose_time_parser.add_argument("--note")
+
+    update_time_parser = subparsers.add_parser("update-meeting-time")
+    update_time_parser.add_argument("--event-id", required=True)
+    update_time_parser.add_argument("--calendar-id", required=True)
+    update_time_parser.add_argument("--start-time", required=True)
+    update_time_parser.add_argument("--end-time", required=True)
+    update_time_parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
     return parser
 
 
@@ -1273,12 +1557,42 @@ def main(argv: list[str] | None = None) -> int:
                 declined_slots=list(args.declined_slots or []),
                 note=args.note,
             )
-        else:
+        elif args.command == "finalize-negotiation":
             state_payload = json.loads(args.state_json)
             result = finalize_negotiation_and_create_meeting(
                 state_payload,
                 description=args.description,
                 location=args.location,
+            )
+        elif args.command == "list-attendee-status":
+            result = list_attendee_status(
+                event_id=args.event_id,
+                calendar_id=args.calendar_id,
+                requester_open_id=args.requester_open_id,
+                page_size=args.page_size,
+            )
+        elif args.command == "send-attendee-message":
+            result = send_attendee_message(
+                attendee_open_ids=list(args.attendee_open_ids or []),
+                message=args.message,
+            )
+        elif args.command == "propose-new-time":
+            result = propose_new_time(
+                attendee_open_ids=list(args.attendee_open_ids or []),
+                title=args.title,
+                candidate_slots=list(args.candidate_slots or []),
+                timezone=args.timezone,
+                event_id=args.event_id,
+                current_time=args.current_time,
+                note=args.note,
+            )
+        else:
+            result = update_meeting_time(
+                event_id=args.event_id,
+                calendar_id=args.calendar_id,
+                start_time=args.start_time,
+                end_time=args.end_time,
+                timezone=args.timezone,
             )
     except FeishuSkillError as exc:
         print(json.dumps({"ok": False, "error": str(exc), "payload": exc.payload}, ensure_ascii=False, indent=2))

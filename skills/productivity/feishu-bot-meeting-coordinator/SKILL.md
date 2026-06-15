@@ -154,6 +154,24 @@ python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
   create-meeting --title "项目汇报会" \
     --start-time "2026-04-28 15:00" --end-time "2026-04-28 15:30" \
     --attendee "ou_attendee_001" --attendee "ou_attendee_002" --description "项目进度汇报"
+
+# list-attendee-status: Query attendee RSVP/response status for a created event
+python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
+  list-attendee-status --event-id "event_123xyz" --calendar-id "calendar_abc"
+
+# send-attendee-message: Message attendees using user IDs returned by list-attendee-status
+python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
+  send-attendee-message --attendee-open-id "ou_attendee_001" --message "请确认是否接受会议邀请。"
+
+# propose-new-time: Ask attendees to coordinate a replacement meeting slot
+python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
+  propose-new-time --title "项目汇报会" --event-id "event_123xyz" \
+    --attendee-open-id "ou_attendee_001" --candidate-slot "2026-04-28 16:00"
+
+# update-meeting-time: Update the event after attendees agree on a new slot
+python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
+  update-meeting-time --event-id "event_123xyz" --calendar-id "calendar_abc" \
+    --start-time "2026-04-28 16:00" --end-time "2026-04-28 16:30"
 ```
 
 ## Installed Skill Config
@@ -187,6 +205,9 @@ When this skill is installed into a workspace, use the configured values as foll
 9. Summarize invitees, timezone, and schedule before final confirmation when the user request is ambiguous.
 10. Treat app secrets, user tokens, and webhook secrets as backend-owned secrets. Never ask the user to paste them into chat or store them in skill config.
 11. When the attendee expression contains a group phrase (for example `管理层群`, `管理层群里的所有人`), pass the **exact user phrase** directly to `create-meeting` as an attendee. Do NOT substitute it with the resolved chat name. The script automatically resolves group members via Feishu chat/member APIs. You do NOT need to manually run `search-chats` and `get-chat-members` before `create-meeting` unless the user explicitly asks to preview the member list.
+12. When the user asks to query attendee response status (`参会人的响应状态`, `RSVP`, `接受/拒绝/待定状态`), use `list-attendee-status`. Prefer passing the `calendar_id` returned by `create-meeting`; if it is unavailable, pass the requester open_id or rely on `FEISHU_REQUESTER_OPEN_ID` so the helper can try the requester's primary calendar and the bot calendar. Do not answer from negotiation state JSON when the user is asking about Feishu calendar RSVP status.
+13. The `user_id` and `message_user_id` returned by `list-attendee-status` are Feishu `open_id` values and can be passed directly to `send-attendee-message` or `propose-new-time` as `--attendee-open-id`. Use them to ask pending/declined attendees to RSVP or to coordinate replacement slots.
+14. Only run `update-meeting-time` after the requester explicitly selects the final replacement slot or attendee coordination has produced an agreed slot. Do not patch event time just because a candidate slot was proposed.
 
 ## Completion Guardrails
 
@@ -321,6 +342,64 @@ python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
 # }
 ```
 
+### Step 6: Query Attendee Response Status
+
+```bash
+# Query RSVP/response status for a created Feishu calendar event
+python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
+  list-attendee-status \
+    --event-id "event_123xyz" \
+    --calendar-id "calendar_abc"
+
+# Expected output (JSON):
+# {
+#   "ok": true,
+#   "result": {
+#     "event_id": "event_123xyz",
+#     "calendar_id": "calendar_abc",
+#     "attendees": [
+#       {
+#         "display_name": "Amy Q",
+#         "user_id": "ou_attendee_001",
+#         "message_user_id": "ou_attendee_001",
+#         "rsvp_status": "accepted",
+#         "response_status": "accepted"
+#       }
+#     ]
+#   }
+# }
+```
+
+### Step 7: Message Attendees And Update Time
+
+Use `message_user_id` or `user_id` from `list-attendee-status` as `--attendee-open-id`.
+
+```bash
+# Ask attendees who have not accepted to RSVP
+python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
+  send-attendee-message \
+    --attendee-open-id "ou_attendee_001" \
+    --message "请确认是否接受会议邀请，或回复需要调整的时间。"
+
+# Propose candidate replacement slots
+python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
+  propose-new-time \
+    --title "项目汇报会" \
+    --event-id "event_123xyz" \
+    --current-time "2026-04-28 15:00" \
+    --attendee-open-id "ou_attendee_001" \
+    --candidate-slot "2026-04-28 16:00" \
+    --candidate-slot "2026-04-28 17:00"
+
+# After a final slot is agreed, update the event and notify attendees
+python .scripts/feishu-bot-meeting-coordinator/scripts/feishu_bot_api.py \
+  update-meeting-time \
+    --event-id "event_123xyz" \
+    --calendar-id "calendar_abc" \
+    --start-time "2026-04-28 16:00" \
+    --end-time "2026-04-28 16:30"
+```
+
 ## Missing Input A2UI Contract
 
 When required meeting fields are missing, emit this schema form (do NOT use markdown lists):
@@ -422,10 +501,14 @@ Use this checklist when you need true in-card submit behavior.
 
 - Contact search CLI: `python scripts/feishu_bot_api.py search-contacts --query "Amy Q" --limit 5`
 - Meeting creation CLI: `python scripts/feishu_bot_api.py create-meeting --title "项目同步" --start-time "2026-04-24 15:40" --end-time "2026-04-24 16:10" --attendee "Chris Han" --attendee "Amy Q"`
+- Attendee status CLI: `python scripts/feishu_bot_api.py list-attendee-status --event-id "event_123xyz" --calendar-id "calendar_abc"`
+- Attendee message CLI: `python scripts/feishu_bot_api.py send-attendee-message --attendee-open-id "ou_xxx" --message "请确认是否接受会议邀请。"`
+- Propose new time CLI: `python scripts/feishu_bot_api.py propose-new-time --title "项目同步" --attendee-open-id "ou_xxx" --candidate-slot "2026-04-24 16:40"`
+- Update meeting time CLI: `python scripts/feishu_bot_api.py update-meeting-time --event-id "event_123xyz" --calendar-id "calendar_abc" --start-time "2026-04-24 16:40" --end-time "2026-04-24 17:10"`
 - Start negotiation CLI: `python scripts/feishu_bot_api.py start-negotiation --title "项目同步" --requester-open-id "ou_xxx" --duration-minutes 30 --attendee-open-id "ou_a" --attendee-open-id "ou_b" --candidate-slot "2026-04-24 15:40" --candidate-slot "2026-04-24 16:40"`
 - Submit response CLI: `python scripts/feishu_bot_api.py submit-response --state-json '{...}' --attendee-open-id "ou_a" --accepted-slot "2026-04-24 15:40"`
 - Finalize CLI: `python scripts/feishu_bot_api.py finalize-negotiation --state-json '{...}' --description "讨论项目进展"`
-- Python API: import `search_contacts(...)`, `start_negotiation(...)`, `submit_attendee_response(...)`, `finalize_negotiation_and_create_meeting(...)`, and `create_meeting(...)` from `scripts/feishu_bot_api.py`.
+- Python API: import `search_contacts(...)`, `start_negotiation(...)`, `submit_attendee_response(...)`, `finalize_negotiation_and_create_meeting(...)`, `create_meeting(...)`, `list_attendee_status(...)`, `send_attendee_message(...)`, `propose_new_time(...)`, and `update_meeting_time(...)` from `scripts/feishu_bot_api.py`.
 
 
 ## Missing Input A2UI Contract
