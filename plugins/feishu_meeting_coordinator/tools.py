@@ -100,6 +100,12 @@ class _LocalCronClient:
 
             update_job(cron_job_id, {"enabled": False})
 
+    def delete_job(self, cron_job_id: str) -> bool:
+        with self._bind():
+            from cron.jobs import remove_job
+
+            return bool(remove_job(cron_job_id))
+
 
 class _DefaultGateway:
     def _cron(self) -> _LocalCronClient:
