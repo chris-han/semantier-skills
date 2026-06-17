@@ -175,6 +175,11 @@ TOOL_SCHEMAS = {
                 ),
             },
             "requester_calendar_id": {"type": "string"},
+            "start_rsvp_monitor": {
+                "type": "boolean",
+                "default": True,
+                "description": "Whether to start automatic RSVP follow-up monitoring after creation.",
+            },
             "is_recurrent_meeting": {
                 "type": "boolean",
                 "description": "Unsupported in v0.1; true requests must be clarified or rejected.",

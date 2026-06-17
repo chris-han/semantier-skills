@@ -208,6 +208,17 @@ def _helper_call(func_name: str, *args: Any, **kwargs: Any) -> str:
     return _ok("result", result)
 
 
+def _helper_error(exc: Exception) -> str:
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict) and payload:
+        return json.dumps(
+            {"ok": False, "error": str(exc), "payload": payload},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    return _error(str(exc))
+
+
 def _payload(args: Any) -> dict[str, Any]:
     if args is None:
         return {}
@@ -536,19 +547,70 @@ def feishu_meeting_create(args, **kwargs):
     )
     if not attendees:
         return _error("at least one non-requester attendee is required")
-    return _helper_call(
-        "create_meeting",
-        title=str(payload.get("title") or ""),
-        start_time=str(payload.get("start_time") or ""),
-        end_time=str(payload.get("end_time") or ""),
-        attendees=attendees,
-        timezone=str(payload.get("timezone") or "Asia/Shanghai"),
-        description=payload.get("description"),
-        location=payload.get("location"),
-        idempotency_key=payload.get("idempotency_key"),
-        requester_open_id=requester_open_id,
-        requester_calendar_id=payload.get("requester_calendar_id"),
-    )
+    try:
+        result = _feishu_helper().create_meeting(
+            title=str(payload.get("title") or ""),
+            start_time=str(payload.get("start_time") or ""),
+            end_time=str(payload.get("end_time") or ""),
+            attendees=attendees,
+            timezone=str(payload.get("timezone") or "Asia/Shanghai"),
+            description=payload.get("description"),
+            location=payload.get("location"),
+            idempotency_key=payload.get("idempotency_key"),
+            requester_open_id=requester_open_id,
+            requester_calendar_id=payload.get("requester_calendar_id"),
+        )
+    except Exception as exc:
+        return _helper_error(exc)
+
+    if isinstance(result, dict) and payload.get("start_rsvp_monitor") is not False:
+        monitor_result = _start_rsvp_monitor_for_created_meeting(
+            payload=payload,
+            meeting=result,
+            attendees=attendees,
+            requester_open_id=_text(requester_open_id),
+            kwargs=kwargs,
+        )
+        result = dict(result)
+        result["rsvp_monitor"] = monitor_result
+        if not monitor_result.get("ok"):
+            warnings = list(result.get("warnings") or [])
+            warnings.append(f"RSVP monitor was not started: {monitor_result.get('error')}")
+            result["warnings"] = warnings
+
+    return _ok("result", result)
+
+
+def _start_rsvp_monitor_for_created_meeting(
+    *,
+    payload: dict[str, Any],
+    meeting: dict[str, Any],
+    attendees: list[Any],
+    requester_open_id: str,
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    event_id = _text(meeting.get("event_id"))
+    calendar_id = _text(meeting.get("calendar_id"))
+    if not event_id or not calendar_id:
+        return {"ok": False, "error": "event_id and calendar_id are required to start RSVP monitor"}
+    try:
+        monitor_payload = _prepare_monitor_payload(
+            {
+                "event_id": event_id,
+                "event_revision_id": _text(meeting.get("event_revision_id")) or event_id,
+                "calendar_id": calendar_id,
+                "attendees": attendees,
+                "requester_open_id": requester_open_id,
+                "meeting_title": payload.get("title"),
+                "meeting_start_time": payload.get("start_time"),
+                "meeting_end_time": payload.get("end_time"),
+                "timezone": payload.get("timezone") or "Asia/Shanghai",
+            }
+        )
+        monitor = _gateway(kwargs).start_monitor(monitor_payload)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "monitor": monitor}
 
 
 def feishu_meeting_negotiation_start(args, **kwargs):
