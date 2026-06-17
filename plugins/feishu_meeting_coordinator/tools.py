@@ -755,10 +755,10 @@ def _start_rsvp_monitor_for_created_meeting(
                 "timezone": payload.get("timezone") or "Asia/Shanghai",
                 "organizer_name": meeting.get("organizer_identity") or meeting.get("organizer_name"),
                 "calendar_item_url": (
-                    meeting.get("calendar_assistant_url")
-                    or meeting.get("calendar_item_url")
+                    meeting.get("calendar_item_url")
                     or meeting.get("event_url")
                     or meeting.get("join_url")
+                    or meeting.get("calendar_assistant_url")
                 ),
             }
         )
