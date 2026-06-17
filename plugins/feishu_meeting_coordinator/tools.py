@@ -317,7 +317,10 @@ def _search_text(value: Any) -> str:
 def _contact_search_queries(payload: dict[str, Any]) -> list[str]:
     queries: list[str] = []
     seen: set[str] = set()
-    requester_open_id = _text(_requester_open_id(payload))
+    try:
+        requester_open_id = _text(_requester_open_id(payload))
+    except RequesterIdentityError:
+        requester_open_id = ""
 
     for value in [_search_text(payload.get("query")), *_list_arg(payload, "queries", "query_list")]:
         query = _search_text(value)
@@ -351,6 +354,7 @@ def _session_env(name: str) -> str:
 def _session_metadata() -> dict[str, Any]:
     hermes_home = _session_env("HERMES_SESSION_HERMES_HOME")
     session_id = _session_env("HERMES_SESSION_ID")
+    env_language = _session_env("HERMES_LANGUAGE") or _session_env("HERMES_LOCALE")
     metadata: dict[str, Any] = {
         "platform": _session_env("HERMES_SESSION_PLATFORM"),
         "session_id": session_id,
@@ -360,7 +364,7 @@ def _session_metadata() -> dict[str, Any]:
         "origin_user_id": _session_env("HERMES_SESSION_USER_ID"),
         "workspace_id": _session_env("HERMES_SESSION_WORKSPACE_OWNER_ID"),
         "hermes_home": hermes_home,
-        "language": _session_env("HERMES_LANGUAGE"),
+        "language": env_language,
     }
     if not hermes_home or not session_id:
         return metadata
@@ -375,7 +379,25 @@ def _session_metadata() -> dict[str, Any]:
         return metadata
     if isinstance(payload, dict):
         metadata.update({key: value for key, value in payload.items() if value is not None})
+    language = _language_from_metadata(metadata) or env_language
+    if language:
+        metadata["language"] = language
     return metadata
+
+
+def _language_from_metadata(metadata: dict[str, Any]) -> str:
+    for key in ("language", "locale", "user_language"):
+        value = _text(metadata.get(key))
+        if value:
+            return value
+    for container_key in ("settings", "user_settings"):
+        container = metadata.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        value = _text(container.get("locale") or container.get("language"))
+        if value:
+            return value
+    return ""
 
 
 def _current_session_origin_user_id() -> str:
@@ -397,8 +419,18 @@ def _feishu_chat_initiator_open_id() -> str:
     return ""
 
 
+class RequesterIdentityError(RuntimeError):
+    pass
+
+
 def _requester_open_id(payload: dict[str, Any]) -> Any:
-    return _feishu_chat_initiator_open_id() or payload.get("requester_open_id")
+    del payload
+    requester_open_id = _feishu_chat_initiator_open_id()
+    if requester_open_id:
+        return requester_open_id
+    raise RequesterIdentityError(
+        "requester_open_id must be resolved from a trusted Feishu session"
+    )
 
 
 def _attendees_without_requester(attendees: list[Any], requester_open_id: Any) -> list[Any]:
@@ -493,7 +525,7 @@ def _live_monitor_attendees(payload: dict[str, Any], requester_open_id: str) -> 
 
 def _prepare_monitor_payload(payload: dict[str, Any]) -> dict[str, Any]:
     metadata = _session_metadata()
-    requester_open_id = _text(_requester_open_id(payload) or metadata.get("origin_user_id"))
+    requester_open_id = _text(_requester_open_id(payload))
     workspace_id = _text(payload.get("workspace_id")) or _workspace_id_from_session(metadata)
     if not workspace_id:
         raise RuntimeError("workspace_id is required for RSVP monitor start")
@@ -527,7 +559,7 @@ def _prepare_monitor_payload(payload: dict[str, Any]) -> dict[str, Any]:
         prepared["creator_user_id"],
     )
     if not prepared.get("language"):
-        prepared["language"] = payload.get("locale") or metadata.get("language")
+        prepared["language"] = metadata.get("language") or payload.get("locale") or payload.get("language")
     prepared["attendees"] = attendees
     if payload.get("meeting_start_time") is None and payload.get("start_time") is not None:
         prepared["meeting_start_time"] = payload.get("start_time")
@@ -593,7 +625,10 @@ def feishu_meeting_create(args, **kwargs):
     payload = _payload(args)
     if payload.get("is_recurrent_meeting") is True:
         return _error("recurrent meetings are not supported by the v0.1 RSVP monitor flow")
-    requester_open_id = _requester_open_id(payload)
+    try:
+        requester_open_id = _requester_open_id(payload)
+    except RequesterIdentityError as exc:
+        return _error(str(exc))
     attendees = _attendees_without_requester(
         _list_arg(
             payload,
@@ -666,7 +701,6 @@ def _start_rsvp_monitor_for_created_meeting(
                 "meeting_start_time": payload.get("start_time"),
                 "meeting_end_time": payload.get("end_time"),
                 "timezone": payload.get("timezone") or "Asia/Shanghai",
-                "language": payload.get("language") or payload.get("locale") or _session_env("HERMES_LANGUAGE"),
             }
         )
         monitor = _gateway(kwargs).start_monitor(monitor_payload)

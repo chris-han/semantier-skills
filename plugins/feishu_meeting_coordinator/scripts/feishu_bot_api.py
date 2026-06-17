@@ -843,8 +843,11 @@ def finalize_negotiation_and_create_meeting(
 
     start_dt = datetime.fromisoformat(state.agreed_slot)
     end_dt = datetime.fromtimestamp(start_dt.timestamp() + state.duration_minutes * 60, tz=start_dt.tzinfo)
-    attendee_open_ids = sorted(set(state.attendees.keys()))
-    participant_open_ids = sorted(set(attendee_open_ids + [state.requester_open_id]))
+    attendee_open_ids = sorted(
+        attendee_open_id
+        for attendee_open_id in set(state.attendees.keys())
+        if attendee_open_id and attendee_open_id != state.requester_open_id
+    )
 
     # Create a single event on the requester's primary calendar.
     # Feishu automatically propagates it to attendee calendars when
@@ -854,7 +857,7 @@ def finalize_negotiation_and_create_meeting(
         title=state.title,
         start_time=start_dt.isoformat(),
         end_time=end_dt.isoformat(),
-        attendees=participant_open_ids,
+        attendees=attendee_open_ids,
         timezone=state.timezone,
         description=description,
         location=location,
