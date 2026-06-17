@@ -150,6 +150,7 @@ class _DefaultGateway:
             store=store,
             feishu_client=_FeishuClient(),
             cron=self._cron_for_monitor(monitor),
+            delivery_client=_CreatorDeliveryClient(),
         )
 
     def monitor_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -201,6 +202,37 @@ class _FeishuClient:
             attendee_open_ids=attendee_open_ids,
             message=message,
         )
+
+
+class _CreatorDeliveryClient:
+    def send_creator_escalation(self, task: dict[str, Any]) -> dict[str, Any]:
+        delivery_binding = json.loads(str(task.get("delivery_binding_json") or "{}"))
+        payload = json.loads(str(task.get("payload_json") or "{}"))
+        hermes_home = _text(delivery_binding.get("hermes_home")) or _session_env("HERMES_SESSION_HERMES_HOME")
+        platform = _text(delivery_binding.get("platform")) or "feishu"
+        chat_id = _text(delivery_binding.get("chat_id"))
+        thread_id = _text(delivery_binding.get("thread_id"))
+        message = _text(payload.get("message") or payload.get("reason") or "Meeting RSVP escalation")
+        if not hermes_home:
+            raise RuntimeError("Semantier gateway binding required")
+        if not chat_id:
+            raise RuntimeError("creator delivery binding missing chat_id")
+        target = f"{platform}:{chat_id}:{thread_id}" if thread_id else f"{platform}:{chat_id}"
+        cron = _LocalCronClient(hermes_home)
+        with cron._bind():
+            from tools.send_message_tool import send_message_tool
+
+            raw = send_message_tool(
+                {
+                    "action": "send",
+                    "target": target,
+                    "message": message,
+                }
+            )
+        result = json.loads(str(raw or "{}"))
+        if result.get("error"):
+            raise RuntimeError(str(result["error"]))
+        return result
 
 
 @lru_cache(maxsize=1)
@@ -328,6 +360,7 @@ def _session_metadata() -> dict[str, Any]:
         "origin_user_id": _session_env("HERMES_SESSION_USER_ID"),
         "workspace_id": _session_env("HERMES_SESSION_WORKSPACE_OWNER_ID"),
         "hermes_home": hermes_home,
+        "language": _session_env("HERMES_LANGUAGE"),
     }
     if not hermes_home or not session_id:
         return metadata
@@ -401,6 +434,7 @@ def _creator_delivery_binding(metadata: dict[str, Any], creator_user_id: str) ->
         "session_key": _text(metadata.get("session_key")),
         "hermes_home": _text(metadata.get("hermes_home")),
         "delivery_adapter_key": metadata.get("delivery_adapter_key"),
+        "language": _text(metadata.get("language")),
         "source": "feishu_session",
         "captured_at": _utc_now_iso(),
     }
@@ -492,6 +526,8 @@ def _prepare_monitor_payload(payload: dict[str, Any]) -> dict[str, Any]:
         metadata,
         prepared["creator_user_id"],
     )
+    if not prepared.get("language"):
+        prepared["language"] = payload.get("locale") or metadata.get("language")
     prepared["attendees"] = attendees
     if payload.get("meeting_start_time") is None and payload.get("start_time") is not None:
         prepared["meeting_start_time"] = payload.get("start_time")
@@ -630,6 +666,7 @@ def _start_rsvp_monitor_for_created_meeting(
                 "meeting_start_time": payload.get("start_time"),
                 "meeting_end_time": payload.get("end_time"),
                 "timezone": payload.get("timezone") or "Asia/Shanghai",
+                "language": payload.get("language") or payload.get("locale") or _session_env("HERMES_LANGUAGE"),
             }
         )
         monitor = _gateway(kwargs).start_monitor(monitor_payload)
