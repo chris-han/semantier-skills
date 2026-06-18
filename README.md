@@ -2,6 +2,8 @@
 
 Standalone GitHub-backed plugin catalog for Semantier and Hermes installation flows.
 
+Plugin authoring guidance lives in [docs/derived/semantier-marketplace-plugin-creation-guideline.md](../docs/derived/semantier-marketplace-plugin-creation-guideline.md).
+
 ## Included Packages
 
 - `feishu_meeting_coordinator`
