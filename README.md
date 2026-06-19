@@ -7,6 +7,7 @@ Plugin authoring guidance lives in [docs/derived/semantier-marketplace-plugin-cr
 ## Included Packages
 
 - `feishu_meeting_coordinator`
+- `auto_resume_screening`
 
 ## Plugin Layout
 
@@ -30,6 +31,12 @@ The current Feishu meeting coordinator plugin is installable from this repositor
 
 ```text
 chris-han/semantier-skills/plugins/feishu_meeting_coordinator
+```
+
+The auto resume screening plugin is installable from this repository with:
+
+```text
+chris-han/semantier-skills/plugins/auto_resume_screening
 ```
 
 ## Marketplace URL

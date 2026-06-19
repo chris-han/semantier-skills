@@ -14,6 +14,20 @@
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/feishu_meeting_coordinator",
       "repo": "https://github.com/chris-han/semantier-skills"
+    },
+    {
+      "id": "chris-han/semantier-skills/plugins/auto_resume_screening",
+      "name": "auto_resume_screening",
+      "type": "plugin",
+      "path": "plugins/auto_resume_screening",
+      "description": "Deterministic resume screening tools for Semantier workspaces",
+      "author": "Semantier",
+      "category": "Productivity",
+      "tags": ["resume", "hiring", "screening", "docx"],
+      "source": "custom-marketplace",
+      "trust_level": "community",
+      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/auto_resume_screening",
+      "repo": "https://github.com/chris-han/semantier-skills"
     }
   ]
 }

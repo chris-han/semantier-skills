@@ -1,0 +1,9 @@
+name: auto_resume_screening
+version: "0.1.0"
+description: Deterministic resume screening tools for Semantier workspaces.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
