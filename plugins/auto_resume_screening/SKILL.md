@@ -1,6 +1,6 @@
 ---
 name: auto-resume-screening
-description: 自动简历筛选：extract uploaded resume text, rank candidates against a job profile, and write a workspace artifact.
+description: 自动简历筛选：extract uploaded resume text from PDF, DOCX, Markdown, or text files, rank candidates against a job profile, and write a workspace artifact.
 metadata:
   semantier:
     route: procedural_only
@@ -19,6 +19,8 @@ Call the registered `screen_resumes` tool with:
 - `resume_paths`
 
 Use `extract_resume_text` only when the user asks for text extraction from a single resume. Use `rank_resume_candidates` only when resume text has already been extracted.
+
+Supported resume formats are `.pdf`, `.docx`, `.md`, and `.txt`. PDF extraction uses deterministic `pypdfium2` embedded-text extraction only; OCR is intentionally not used by default.
 
 Do not use terminal, generated Python, ad hoc HTTP, unmanaged files, prompt memory, or user self-claims as substitutes for the registered tool surface. If the tool surface is not loaded, stop and report that the `auto_resume_screening` plugin must be installed or enabled in the active workspace.
 
