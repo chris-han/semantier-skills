@@ -39,6 +39,11 @@ The auto resume screening plugin is installable from this repository with:
 chris-han/semantier-skills/plugins/auto_resume_screening
 ```
 
+`real_company_onboarding` is a built-in shared Semantier runtime plugin. Its
+source is tracked in the Semantier runtime repository at
+`src/plugins/real_company_onboarding`, installed by launcher bootstrap into the
+shared runtime, and is not advertised as a marketplace-installable package.
+
 `automate_excel` is a built-in Semantier runtime plugin. Its source remains at
 `plugins/automate_excel`, but it is installed by launcher bootstrap and is not
 advertised as a marketplace-installable package.
