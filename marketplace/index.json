@@ -28,20 +28,6 @@
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/auto_resume_screening",
       "repo": "https://github.com/chris-han/semantier-skills"
-    },
-    {
-      "id": "chris-han/semantier-skills/plugins/automate_excel",
-      "name": "automate_excel",
-      "type": "plugin",
-      "path": "plugins/automate_excel",
-      "description": "Deterministic Excel and CSV automation tools for Semantier workspaces",
-      "author": "Semantier",
-      "category": "Productivity",
-      "tags": ["excel", "csv", "spreadsheet", "automation"],
-      "source": "custom-marketplace",
-      "trust_level": "community",
-      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/automate_excel",
-      "repo": "https://github.com/chris-han/semantier-skills"
     }
   ]
 }
