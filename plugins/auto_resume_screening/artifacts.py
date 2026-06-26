@@ -29,6 +29,13 @@ def _hash_payload(payload: dict[str, Any]) -> str:
 def workspace_runs_dir() -> Path:
     raw = os.environ.get("SEMANTIER_WORKSPACE_RUNS_DIR")
     if not raw:
+        try:
+            from runtime_paths import current_workspace_runs_dir
+
+            raw = current_workspace_runs_dir()
+        except Exception:
+            raw = None
+    if not raw:
         raise RuntimeError("WORKSPACE_RUNS_DIR_REQUIRED: SEMANTIER_WORKSPACE_RUNS_DIR is required")
     return Path(raw).expanduser()
 

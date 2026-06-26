@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 import re
+import unicodedata
 import zipfile
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -309,9 +311,210 @@ def _active_workspace_home() -> str:
     return _session_env("HERMES_SESSION_HERMES_HOME") or os.getenv("HERMES_HOME", "")
 
 
+def _filename_lookup_key(name: str) -> str:
+    return re.sub(r"\s*-\s*", "-", name.strip())
+
+
+def _filename_match_key(name: str) -> str:
+    normalized = unicodedata.normalize("NFKC", name).casefold().strip()
+    normalized = re.sub(r"[\u2010-\u2015\u2212\uff0d]+", "-", normalized)
+    normalized = re.sub(r"[\s_\-]+", "", normalized)
+    return normalized
+
+
+def _upload_id_for_path(path: Path) -> str:
+    return hashlib.sha256(path.name.encode("utf-8")).hexdigest()[:16]
+
+
+def _session_uploads_root() -> Path | None:
+    workspace_home = _active_workspace_home().strip()
+    session_id = _session_env("HERMES_SESSION_ID").strip()
+    if not workspace_home or not session_id:
+        return None
+    try:
+        from runtime_paths import workspace_session_runs_root_from_hermes_home
+
+        return (
+            workspace_session_runs_root_from_hermes_home(Path(workspace_home), session_id).parent
+            / "uploads"
+        ).resolve()
+    except Exception:
+        return None
+
+
+def list_session_upload_records() -> dict[str, Any]:
+    uploads_root = _session_uploads_root()
+    if uploads_root is None:
+        return {
+            "status": "error",
+            "error_code": "SESSION_UPLOADS_CONTEXT_REQUIRED",
+            "message": "Active workspace/session context is required to list uploads.",
+        }
+    if not uploads_root.exists():
+        return {"status": "ok", "uploads_root": str(uploads_root), "uploads": []}
+    records = []
+    for candidate in sorted(uploads_root.iterdir(), key=lambda item: item.name):
+        if not candidate.is_file():
+            continue
+        extension = candidate.suffix.lower()
+        records.append(
+            {
+                "upload_id": _upload_id_for_path(candidate),
+                "filename": candidate.name,
+                "path": f"uploads/{candidate.name}",
+                "source_path": str(candidate.resolve()),
+                "extension": extension,
+                "size_bytes": candidate.stat().st_size,
+                "supported": extension in SUPPORTED_EXTENSIONS,
+            }
+        )
+    return {"status": "ok", "uploads_root": str(uploads_root), "uploads": records}
+
+
+def resolve_uploaded_resume_path(query: str) -> dict[str, Any]:
+    raw = str(query or "").strip()
+    if not raw:
+        return {
+            "status": "error",
+            "error_code": "UPLOAD_QUERY_REQUIRED",
+            "message": "A resume filename, uploads path, or upload_id is required.",
+        }
+
+    direct = Path(raw).expanduser()
+    if direct.exists():
+        return {
+            "status": "ok",
+            "query": raw,
+            "source_path": str(direct.resolve()),
+            "filename": direct.name,
+            "resolution": "direct_path",
+        }
+
+    manifest = list_session_upload_records()
+    if manifest.get("status") != "ok":
+        return manifest
+    uploads = [item for item in manifest["uploads"] if item.get("supported")]
+    if not uploads:
+        return {
+            "status": "error",
+            "error_code": "NO_SUPPORTED_UPLOADS",
+            "message": "No supported resume uploads are available in the active session.",
+        }
+
+    query_path = Path(raw)
+    query_filename = query_path.name
+    query_upload_path = raw if raw.startswith("uploads/") else f"uploads/{query_filename}"
+
+    exact = [
+        record
+        for record in uploads
+        if raw == record["upload_id"]
+        or raw == record["filename"]
+        or raw == record["path"]
+        or query_upload_path == record["path"]
+    ]
+    if len(exact) == 1:
+        record = exact[0]
+        return {
+            "status": "ok",
+            "query": raw,
+            "source_path": record["source_path"],
+            "filename": record["filename"],
+            "upload_id": record["upload_id"],
+            "resolution": "exact",
+        }
+    if len(exact) > 1:
+        return {
+            "status": "error",
+            "error_code": "UPLOAD_RESOLUTION_AMBIGUOUS",
+            "query": raw,
+            "candidates": exact,
+        }
+
+    query_key = _filename_match_key(query_filename)
+    normalized = [
+        record for record in uploads if _filename_match_key(str(record["filename"])) == query_key
+    ]
+    if len(normalized) == 1:
+        record = normalized[0]
+        return {
+            "status": "ok",
+            "query": raw,
+            "source_path": record["source_path"],
+            "filename": record["filename"],
+            "upload_id": record["upload_id"],
+            "resolution": "normalized_filename",
+        }
+    if len(normalized) > 1:
+        return {
+            "status": "error",
+            "error_code": "UPLOAD_RESOLUTION_AMBIGUOUS",
+            "query": raw,
+            "candidates": normalized,
+        }
+
+    scored = [
+        (
+            SequenceMatcher(
+                None,
+                query_key,
+                _filename_match_key(str(record["filename"])),
+            ).ratio(),
+            record,
+        )
+        for record in uploads
+    ]
+    scored = [(score, record) for score, record in scored if score >= 0.88]
+    scored.sort(key=lambda item: (-item[0], str(item[1]["filename"])))
+    if scored and (len(scored) == 1 or scored[0][0] > scored[1][0]):
+        score, record = scored[0]
+        return {
+            "status": "ok",
+            "query": raw,
+            "source_path": record["source_path"],
+            "filename": record["filename"],
+            "upload_id": record["upload_id"],
+            "resolution": "close_filename",
+            "confidence": round(score, 4),
+        }
+    if scored:
+        return {
+            "status": "error",
+            "error_code": "UPLOAD_RESOLUTION_AMBIGUOUS",
+            "query": raw,
+            "candidates": [record for _score, record in scored],
+        }
+    return {
+        "status": "error",
+        "error_code": "UPLOAD_NOT_FOUND",
+        "query": raw,
+        "available_uploads": uploads,
+    }
+
+
+def _resolve_hyphen_spacing_variant(path: Path) -> Path | None:
+    parent = path.parent
+    if not parent.exists() or not parent.is_dir():
+        return None
+    lookup_key = _filename_lookup_key(path.name)
+    matches = [
+        candidate
+        for candidate in parent.iterdir()
+        if candidate.is_file() and _filename_lookup_key(candidate.name) == lookup_key
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def _resolve_resume_path(path: Path) -> Path:
     expanded = path.expanduser()
-    if expanded.exists() or expanded.is_absolute():
+    if expanded.exists():
+        return expanded
+    sibling_variant = _resolve_hyphen_spacing_variant(expanded)
+    if sibling_variant is not None:
+        return sibling_variant
+    if expanded.is_absolute():
         return expanded
     if not path.parts or path.parts[0] != "uploads":
         return expanded
@@ -325,18 +528,15 @@ def _resolve_resume_path(path: Path) -> Path:
     if not workspace_home or not session_id:
         return expanded
 
-    try:
-        from runtime_paths import workspace_session_runs_root_from_hermes_home
-
-        uploads_root = (
-            workspace_session_runs_root_from_hermes_home(Path(workspace_home), session_id).parent
-            / "uploads"
-        )
-        candidate = (uploads_root / Path(*relative_parts)).resolve()
-        resolved_root = uploads_root.resolve()
-    except Exception:
+    uploads_root = _session_uploads_root()
+    if uploads_root is None:
         return expanded
+    candidate = (uploads_root / Path(*relative_parts)).resolve()
+    resolved_root = uploads_root.resolve()
     if candidate != resolved_root and resolved_root in candidate.parents:
+        sibling_variant = _resolve_hyphen_spacing_variant(candidate)
+        if sibling_variant is not None:
+            return sibling_variant
         return candidate
     return expanded
 

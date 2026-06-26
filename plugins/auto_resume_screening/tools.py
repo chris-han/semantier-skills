@@ -40,9 +40,22 @@ def rank_resume_candidates(args: dict[str, Any], **_kw: Any) -> str:
     return json.dumps(rank_resumes(job_profile, resumes), ensure_ascii=False)
 
 
+def list_session_uploads(args: dict[str, Any] | None = None, **_kw: Any) -> str:
+    from .extraction import list_session_upload_records
+
+    return json.dumps(list_session_upload_records(), ensure_ascii=False)
+
+
+def resolve_uploaded_resume(args: dict[str, Any], **_kw: Any) -> str:
+    from .extraction import resolve_uploaded_resume_path
+
+    query = str(args.get("query") or args.get("resume_path") or "").strip()
+    return json.dumps(resolve_uploaded_resume_path(query), ensure_ascii=False)
+
+
 def screen_resumes(args: dict[str, Any], **_kw: Any) -> str:
     from .artifacts import write_screening_artifact
-    from .extraction import extract_text_from_resume
+    from .extraction import extract_text_from_resume, resolve_uploaded_resume_path
     from .scoring import rank_resumes
 
     job_profile = args.get("job_profile")
@@ -56,7 +69,20 @@ def screen_resumes(args: dict[str, Any], **_kw: Any) -> str:
     extracted: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for index, raw_path in enumerate(resume_paths, start=1):
-        result = extract_text_from_resume(Path(str(raw_path)))
+        resolved = resolve_uploaded_resume_path(str(raw_path))
+        if resolved.get("status") == "ok":
+            resume_path = Path(str(resolved["source_path"]))
+        elif resolved.get("error_code") in {
+            "SESSION_UPLOADS_CONTEXT_REQUIRED",
+            "NO_SUPPORTED_UPLOADS",
+            "UPLOAD_NOT_FOUND",
+        }:
+            resume_path = Path(str(raw_path))
+        else:
+            errors.append(resolved)
+            continue
+
+        result = extract_text_from_resume(resume_path)
         if result.get("status") != "ok":
             errors.append(result)
             continue

@@ -18,6 +18,8 @@ Call the registered `screen_resumes` tool with:
 - `job_profile.min_years_experience`
 - `resume_paths`
 
+Use `list_session_uploads` when you need to inspect which files are available in the active session. Use `resolve_uploaded_resume` when a user-provided filename may differ from the uploaded filename; it resolves filenames, `uploads/<filename>` paths, and `upload_id` values through the active session upload manifest. If resolution is ambiguous, ask the user to choose from the returned candidates instead of guessing.
+
 Use `extract_resume_text` only when the user asks for text extraction from a single resume. Use `rank_resume_candidates` only when resume text has already been extracted.
 
 Use `extract_role_terms` only when maintaining or auditing the role-title negative filter. It fetches the configured occupation index pages and returns terms missing from the current plugin heuristic; it does not screen resumes or update source files by itself.

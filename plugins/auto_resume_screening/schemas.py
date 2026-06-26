@@ -51,6 +51,33 @@ RANK_RESUME_CANDIDATES_SCHEMA = {
     },
 }
 
+LIST_SESSION_UPLOADS_SCHEMA = {
+    "description": "List supported and unsupported uploaded files for the active workspace session.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
+RESOLVE_UPLOADED_RESUME_SCHEMA = {
+    "description": (
+        "Resolve a resume filename, uploads path, or upload_id against the active session upload manifest."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Resume filename, uploads/<filename> path, or upload_id.",
+            },
+            "resume_path": {
+                "type": "string",
+                "description": "Backward-compatible alias for query.",
+            },
+        },
+    },
+}
+
 SCREEN_RESUMES_SCHEMA = {
     "description": (
         "Extract and rank uploaded resumes, then persist a workspace-scoped screening artifact."
