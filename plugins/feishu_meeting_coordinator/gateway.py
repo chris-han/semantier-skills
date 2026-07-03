@@ -1124,7 +1124,7 @@ def _submit_negotiation_callback_reply(
     kanban: KanbanClient | None = None,
 ) -> dict[str, Any]:
     if payload.get("callback_signature_valid") is not True:
-        raise PermissionError("invalid_signature")
+        return {"status": "rejected", "reason": "invalid_signature"}
     root_message_id = str(
         payload.get("root_message_id")
         or payload.get("thread_id")
@@ -1135,14 +1135,17 @@ def _submit_negotiation_callback_reply(
     sender_open_id = str(payload.get("sender_open_id") or "").strip()
     workspace_id = str(payload.get("workspace_id") or "").strip()
     if not root_message_id:
-        raise PermissionError("uncorrelated_message")
+        return {"status": "not_correlated", "reason": "missing_root_message_id"}
     if not provider_message_id:
-        raise ValueError("provider_message_id is required")
+        return {"status": "rejected", "reason": "missing_provider_message_id"}
     if not sender_open_id:
-        raise PermissionError("unknown_sender")
-    outbound = store.get_outbound_negotiation_message_by_provider_id(
-        provider_message_id=root_message_id
-    )
+        return {"status": "rejected", "reason": "unknown_sender"}
+    try:
+        outbound = store.get_outbound_negotiation_message_by_provider_id(
+            provider_message_id=root_message_id
+        )
+    except KeyError:
+        return {"status": "not_correlated", "reason": "outbound_not_found"}
     negotiation = store.get_negotiation(str(outbound["negotiation_id"]))
     participant_user_id = str(outbound["participant_user_id"])
     if workspace_id and str(negotiation["workspace_id"]) != workspace_id:
@@ -1152,7 +1155,7 @@ def _submit_negotiation_callback_reply(
             message_id=provider_message_id,
             reason="wrong_workspace",
         )
-        raise PermissionError("wrong_workspace")
+        return {"status": "rejected", "reason": "wrong_workspace"}
     participants = store.list_negotiation_participants(
         str(negotiation["negotiation_id"])
     )
@@ -1175,8 +1178,8 @@ def _submit_negotiation_callback_reply(
             message_id=provider_message_id,
             reason="uncorrelated_message",
         )
-        raise PermissionError("uncorrelated_message")
-    return submit_negotiation_reply(
+        return {"status": "rejected", "reason": "uncorrelated_message"}
+    result = submit_negotiation_reply(
         {
             **payload,
             "negotiation_id": str(negotiation["negotiation_id"]),
@@ -1190,6 +1193,7 @@ def _submit_negotiation_callback_reply(
         store=store,
         kanban=kanban,
     )
+    return {"status": "accepted", **result}
 
 
 def finalize_negotiation_case(

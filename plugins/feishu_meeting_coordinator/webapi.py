@@ -179,6 +179,14 @@ async def feishu_meeting_coordinator_reply_callback(request: Request):
         raise HTTPException(status_code=403, detail="uncorrelated_message") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(result, dict) and result.get("status") in {
+        "not_correlated",
+        "rejected",
+    }:
+        raise HTTPException(
+            status_code=403,
+            detail=result.get("reason", "uncorrelated_message"),
+        )
     return {"ok": True, "result": result}
 
 
