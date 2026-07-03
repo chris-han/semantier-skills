@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import yaml
+
 
 def _ok(key: str, value: Any) -> str:
     return json.dumps({"ok": True, key: value}, ensure_ascii=False, sort_keys=True)
@@ -33,6 +35,20 @@ def _hydrate_saved_gateway_env() -> None:
     except Exception:
         return
     _hydrate_saved_feishu_gateway_env()
+
+
+@lru_cache(maxsize=1)
+def _messages_module():
+    module_path = Path(__file__).with_name("messages.py")
+    spec = importlib.util.spec_from_file_location(
+        "semantier_feishu_meeting_coordinator_messages",
+        module_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load meeting coordinator messages from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class _LocalCronClient:
@@ -136,6 +152,40 @@ class _LocalCronClient:
         )
         script_path.write_text(script_text, encoding="utf-8")
 
+    def agent_runtime_config(self, *, profile: str) -> dict[str, str | None]:
+        if not os.environ.get("SEMANTIER_WORKSPACE_ID"):
+            raise RuntimeError("missing_workspace_authority")
+        try:
+            _feishu_helper()._resolve_runtime_feishu_config()
+        except Exception as exc:
+            raise RuntimeError("missing_feishu_bot_config") from exc
+        try:
+            from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
+
+            profile_home = Path(resolve_profile_env(normalize_profile_name(profile))).resolve()
+        except Exception as exc:
+            raise RuntimeError("missing_workspace_authority") from exc
+        config_path = profile_home / "config.yaml"
+        try:
+            loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+        except Exception as exc:
+            raise RuntimeError("invalid_profile_configuration") from exc
+        config = loaded if isinstance(loaded, dict) else {}
+        model_cfg = config.get("model")
+        if isinstance(model_cfg, str):
+            model = model_cfg.strip()
+            provider = ""
+            base_url = None
+        elif isinstance(model_cfg, dict):
+            model = str(model_cfg.get("default") or model_cfg.get("model") or "").strip()
+            provider = str(model_cfg.get("provider") or "").strip()
+            base_url = str(model_cfg.get("base_url") or "").strip() or None
+        else:
+            model = ""
+            provider = ""
+            base_url = None
+        return {"model": model or None, "provider": provider or None, "base_url": base_url}
+
     def ensure_job(
         self,
         *,
@@ -148,6 +198,9 @@ class _LocalCronClient:
         repeat: int,
         no_agent: bool = False,
         script: str | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        base_url: str | None = None,
     ) -> str:
         with self._bind():
             from cron.jobs import create_job, list_jobs, update_job
@@ -176,6 +229,12 @@ class _LocalCronClient:
                     updates["provider"] = None
                 if no_agent and str(job.get("base_url") or ""):
                     updates["base_url"] = None
+                if not no_agent and (job.get("model") or None) != model:
+                    updates["model"] = model
+                if not no_agent and (job.get("provider") or None) != provider:
+                    updates["provider"] = provider
+                if not no_agent and (job.get("base_url") or None) != base_url:
+                    updates["base_url"] = base_url
                 if updates:
                     update_job(job_id, updates)
                 return job_id
@@ -189,6 +248,9 @@ class _LocalCronClient:
                 profile=profile,
                 no_agent=no_agent,
                 script=script,
+                model=model,
+                provider=provider,
+                base_url=base_url,
             )
             return str(job["id"])
 
@@ -297,6 +359,230 @@ class _DefaultGateway:
             cron=self._cron(),
         )
 
+    def negotiation_case_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from agents import meeting_coordinator_gateway, meeting_coordinator_store
+
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        negotiation = store.create_or_get_negotiation_case(
+            monitor_id=_text(payload.get("monitor_id")),
+            event_revision_id=_text(payload.get("event_revision_id")),
+            trigger_attendee_user_id=_text(payload.get("trigger_attendee_user_id")),
+        )
+        if payload.get("ensure_scheduler") is not False:
+            negotiation = meeting_coordinator_gateway.ensure_negotiation_job(
+                negotiation_id=str(negotiation["negotiation_id"]),
+                store=store,
+                cron=self._cron(),
+            )
+        return negotiation
+
+    def negotiation_case_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from agents import meeting_coordinator_gateway, meeting_coordinator_store
+
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        negotiation_id = _text(payload.get("negotiation_id"))
+        negotiation = store.get_negotiation(negotiation_id) if negotiation_id else None
+        cron = (
+            self._cron_for_monitor(negotiation)
+            if negotiation and str(negotiation.get("status") or "") in {
+                "consented",
+                "requester_decided",
+                "cancelled",
+                "expired",
+                "failed",
+            }
+            else None
+        )
+        result = meeting_coordinator_gateway.negotiation_case_tick(
+            payload,
+            store=store,
+            cron=cron,
+        )
+        if not result.get("lease_acquired") or result.get("terminal"):
+            return result
+        lease_owner = _text(payload.get("lease_owner")) or f"agent:{negotiation_id}"
+        negotiation = store.get_negotiation(negotiation_id)
+        if negotiation["status"] != "pending_decliner_input":
+            if negotiation["status"] != "collecting_votes":
+                store.release_negotiation_lease(negotiation_id, owner=lease_owner)
+                return result
+            slots = store.list_candidate_slots(negotiation_id)
+            if not slots:
+                store.release_negotiation_lease(negotiation_id, owner=lease_owner)
+                return {**result, "vote_prompts_sent": 0, "reason": "missing_candidate_slot"}
+            slot = slots[-1]
+            participants = store.list_negotiation_participants(negotiation_id)
+            prompts_sent = 0
+            deduped = 0
+            try:
+                payload_json = json.loads(str(negotiation.get("payload_json") or "{}"))
+            except json.JSONDecodeError:
+                payload_json = {}
+            proposed_by_name = str(slot.get("proposed_by_user_id") or "")
+            for participant in participants:
+                attendee_id = str(participant["attendee_user_id"])
+                if attendee_id == str(slot["proposed_by_user_id"]):
+                    continue
+                if int(participant.get("required_for_consent") or 0) != 1:
+                    continue
+                target_id = _text(participant.get("message_user_id")) or attendee_id
+                if not target_id:
+                    continue
+                message = _messages_module().render_ask_attendee_slot_vote(
+                    attendee_name=_text(participant.get("display_name")) or attendee_id,
+                    proposed_by_name=proposed_by_name,
+                    meeting_title=_text(payload_json.get("meeting_title") or payload_json.get("title"))
+                    or _text(negotiation.get("event_id")),
+                    candidate_slot=f"{slot['start_time']} - {slot['end_time']}",
+                    calendar_item_link=_text(
+                        payload_json.get("calendar_item_url")
+                        or payload_json.get("calendar_url")
+                        or payload_json.get("event_url")
+                    ),
+                )
+                reserved = store.reserve_outbound_message(
+                    negotiation_id=negotiation_id,
+                    message_type="ask_attendee_vote",
+                    participant_user_id=attendee_id,
+                    slot_id=str(slot["slot_id"]),
+                    round_number=int(slot["round_number"]),
+                    state_version=int(negotiation["state_version"] or 0),
+                    payload={"text": message, "target_id": target_id},
+                )
+                if not reserved["reserved"]:
+                    deduped += 1
+                    continue
+                provider_result = _FeishuClient().send_attendee_message(
+                    attendee_open_ids=[target_id],
+                    message=message,
+                )
+                provider_message_id = _text(provider_result.get("message_id"))
+                if provider_message_id:
+                    store.mark_outbound_message_sent(
+                        message_event_id=reserved["message"]["message_event_id"],
+                        provider_message_id=provider_message_id,
+                    )
+                store.update_negotiation_participant_response(
+                    negotiation_id=negotiation_id,
+                    attendee_user_id=attendee_id,
+                    latest_response_status="asked",
+                    latest_slot_id=str(slot["slot_id"]),
+                    contacted=True,
+                    responded=False,
+                )
+                prompts_sent += 1
+            store.release_negotiation_lease(negotiation_id, owner=lease_owner)
+            return {
+                **result,
+                "vote_prompts_sent": prompts_sent,
+                "vote_prompts_deduplicated": deduped,
+            }
+        decliners = [
+            item
+            for item in store.list_negotiation_participants(negotiation_id)
+            if item["role"] == "decliner"
+        ]
+        if not decliners:
+            store.release_negotiation_lease(negotiation_id, owner=lease_owner)
+            return {**result, "prompt_sent": False, "reason": "missing_decliner"}
+        decliner = decliners[0]
+        target_id = _text(decliner.get("message_user_id")) or _text(decliner.get("attendee_user_id"))
+        if not target_id:
+            store.release_negotiation_lease(negotiation_id, owner=lease_owner)
+            return {**result, "prompt_sent": False, "reason": "missing_open_id"}
+        try:
+            payload_json = json.loads(str(negotiation.get("payload_json") or "{}"))
+        except json.JSONDecodeError:
+            payload_json = {}
+        message = _messages_module().render_ask_decliner_alternative_slot(
+            attendee_name=_text(decliner.get("display_name")) or target_id,
+            meeting_title=_text(payload_json.get("meeting_title") or payload_json.get("title"))
+            or _text(negotiation.get("event_id")),
+            original_time=f"{negotiation['original_start_time']} - {negotiation['original_end_time']}",
+            timezone=_text(negotiation.get("timezone")) or "UTC",
+            calendar_item_link=_text(
+                payload_json.get("calendar_item_url")
+                or payload_json.get("calendar_url")
+                or payload_json.get("event_url")
+            ),
+        )
+        reserved = store.reserve_outbound_message(
+            negotiation_id=negotiation_id,
+            message_type="ask_decliner_slot",
+            participant_user_id=str(decliner["attendee_user_id"]),
+            round_number=int(negotiation["current_round"] or 0),
+            state_version=int(negotiation["state_version"] or 0),
+            payload={"text": message, "target_id": target_id},
+        )
+        if not reserved["reserved"]:
+            store.release_negotiation_lease(negotiation_id, owner=lease_owner)
+            return {
+                **result,
+                "prompt_sent": False,
+                "deduplicated_message_event_id": reserved["message"]["message_event_id"],
+            }
+        provider_result = _FeishuClient().send_attendee_message(
+            attendee_open_ids=[target_id],
+            message=message,
+        )
+        provider_message_id = _text(provider_result.get("message_id"))
+        if provider_message_id:
+            store.mark_outbound_message_sent(
+                message_event_id=reserved["message"]["message_event_id"],
+                provider_message_id=provider_message_id,
+            )
+        store.release_negotiation_lease(negotiation_id, owner=lease_owner)
+        return {
+            **result,
+            "prompt_sent": True,
+            "message_event_id": reserved["message"]["message_event_id"],
+            "provider_message_id": provider_message_id or None,
+        }
+
+    def negotiation_case_submit_reply(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from agents import meeting_coordinator_gateway, meeting_coordinator_store
+
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        reply_payload = dict(payload)
+        if reply_payload.get("start_time") and reply_payload.get("end_time"):
+            _normalize_temporal_window_payload(reply_payload)
+        return meeting_coordinator_gateway.submit_negotiation_reply(
+            reply_payload,
+            store=store,
+        )
+
+    def negotiation_case_finalize(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from agents import meeting_coordinator_gateway, meeting_coordinator_store
+
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        return meeting_coordinator_gateway.finalize_negotiation_case(
+            payload,
+            store=store,
+            calendar_client=_CalendarUpdateClient(),
+            cron=self._cron(),
+        )
+
+    def negotiation_case_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from agents import meeting_coordinator_store
+
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        negotiation_id = _text(payload.get("negotiation_id"))
+        owner = _text(payload.get("lease_owner")) or f"operator:{_text(payload.get('operator_user_id')) or 'unknown'}"
+        lease = store.acquire_negotiation_lease(negotiation_id, owner=owner)
+        if not lease["acquired"]:
+            raise RuntimeError("lease_conflict")
+        result = store.transition_negotiation_state(
+            negotiation_id,
+            lease_owner=owner,
+            expected_state=str(lease["record"]["status"]),
+            expected_state_version=int(lease["record"]["state_version"]),
+            next_state="cancelled",
+            patch={},
+        )
+        if not result["ok"]:
+            raise RuntimeError(str(result["reason"]))
+        return result["record"]
+
 
 def _default_gateway() -> _DefaultGateway:
     return _DefaultGateway()
@@ -350,6 +636,25 @@ class _CreatorDeliveryClient:
         if result.get("error"):
             raise RuntimeError(str(result["error"]))
         return result
+
+
+class _CalendarUpdateClient:
+    def update_meeting_time(
+        self,
+        *,
+        event_id: str,
+        calendar_id: str,
+        start_time: str,
+        end_time: str,
+        timezone: str,
+    ) -> dict[str, Any]:
+        return _feishu_helper().update_meeting_time(
+            event_id=event_id,
+            calendar_id=calendar_id,
+            start_time=start_time,
+            end_time=end_time,
+            timezone=timezone,
+        )
 
 
 @lru_cache(maxsize=1)
@@ -1108,6 +1413,46 @@ def feishu_meeting_monitor_stop(args, **kwargs):
     except Exception as exc:
         return _error(str(exc))
     return _ok("result", result)
+
+
+def feishu_meeting_negotiation_case_start(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_case_start(dict(args or {}))
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("negotiation", result)
+
+
+def feishu_meeting_negotiation_case_tick(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_case_tick(dict(args or {}))
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_negotiation_case_submit_reply(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_case_submit_reply(dict(args or {}))
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_negotiation_case_finalize(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_case_finalize(dict(args or {}))
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("finalize_attempt", result)
+
+
+def feishu_meeting_negotiation_case_stop(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_case_stop(dict(args or {}))
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("negotiation", result)
 
 
 def feishu_meeting_escalation_retry_tick(args, **kwargs):

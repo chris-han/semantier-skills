@@ -100,3 +100,101 @@ def render_creator_cancel_suggestion(
         },
         language=language,
     )
+
+
+def render_negotiator_system(
+    *,
+    negotiation_id: str,
+    workspace_id: str,
+    language: str = "en",
+) -> str:
+    return _render(
+        "NEGOTIATOR_SYSTEM.md",
+        {
+            "negotiation_id": negotiation_id,
+            "workspace_id": workspace_id,
+        },
+        language=language,
+    )
+
+
+def render_ask_decliner_alternative_slot(
+    *,
+    attendee_name: str,
+    meeting_title: str,
+    original_time: str,
+    timezone: str,
+    calendar_item_link: str = "",
+    language: str = "en",
+) -> str:
+    return _render(
+        "ASK_DECLINER_ALTERNATIVE_SLOT.md",
+        {
+            "attendee_name": attendee_name,
+            "meeting_title": meeting_title,
+            "original_time": original_time,
+            "timezone": timezone,
+            "calendar_item_link": calendar_item_link,
+        },
+        language=language,
+    )
+
+
+def render_ask_attendee_slot_vote(
+    *,
+    attendee_name: str,
+    proposed_by_name: str,
+    meeting_title: str,
+    candidate_slot: str,
+    calendar_item_link: str = "",
+    language: str = "en",
+) -> str:
+    return _render(
+        "ASK_ATTENDEE_SLOT_VOTE.md",
+        {
+            "attendee_name": attendee_name,
+            "proposed_by_name": proposed_by_name,
+            "meeting_title": meeting_title,
+            "candidate_slot": candidate_slot,
+            "calendar_item_link": calendar_item_link,
+        },
+        language=language,
+    )
+
+
+def render_requester_final_decision(
+    *,
+    requester_name: str,
+    meeting_title: str,
+    original_time: str,
+    candidate_summary: str,
+    language: str = "en",
+) -> str:
+    return _render(
+        "REQUESTER_FINAL_DECISION.md",
+        {
+            "requester_name": requester_name,
+            "meeting_title": meeting_title,
+            "original_time": original_time,
+            "candidate_summary": candidate_summary,
+        },
+        language=language,
+    )
+
+
+def render_negotiation_confirmation(
+    *,
+    meeting_title: str,
+    decision: str,
+    selected_time: str,
+    language: str = "en",
+) -> str:
+    return _render(
+        "NEGOTIATION_CONFIRMATION.md",
+        {
+            "meeting_title": meeting_title,
+            "decision": decision,
+            "selected_time": selected_time,
+        },
+        language=language,
+    )

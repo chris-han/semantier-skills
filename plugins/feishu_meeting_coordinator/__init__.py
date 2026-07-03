@@ -16,6 +16,11 @@ from .tools import (
     feishu_meeting_monitor_start,
     feishu_meeting_monitor_stop,
     feishu_meeting_monitor_tick,
+    feishu_meeting_negotiation_case_finalize,
+    feishu_meeting_negotiation_case_start,
+    feishu_meeting_negotiation_case_stop,
+    feishu_meeting_negotiation_case_submit_reply,
+    feishu_meeting_negotiation_case_tick,
     feishu_meeting_negotiation_finalize,
     feishu_meeting_negotiation_next_round_prompts,
     feishu_meeting_negotiation_start,
@@ -322,6 +327,58 @@ TOOL_SCHEMAS = {
             "reason": {"type": "string"},
         }
     ),
+    "feishu_meeting_negotiation_case_start": _object_schema(
+        {
+            "monitor_id": {"type": "string"},
+            "event_revision_id": {"type": "string"},
+            "trigger_attendee_user_id": {"type": "string"},
+            "ensure_scheduler": {"type": "boolean", "default": True},
+        },
+        required=("monitor_id", "event_revision_id", "trigger_attendee_user_id"),
+    ),
+    "feishu_meeting_negotiation_case_tick": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "lease_owner": {"type": "string"},
+        },
+        required=("negotiation_id",),
+    ),
+    "feishu_meeting_negotiation_case_submit_reply": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "participant_user_id": {"type": "string"},
+            "message_id": {"type": "string"},
+            "reply_text": {"type": "string"},
+            "callback_signature_valid": {"type": "boolean"},
+            "outbound_message_event_id": {"type": "string"},
+        },
+        required=("negotiation_id", "participant_user_id", "message_id"),
+    ),
+    "feishu_meeting_negotiation_case_finalize": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "decision_source": {"type": "string", "enum": ["consent", "requester_final_decision"]},
+            "selected_slot_id": {"type": "string"},
+            "requester_confirmation": {"type": "boolean"},
+            "requested_by_user_id": {"type": "string"},
+            "calendar_update_payload": {"type": "object", "additionalProperties": True},
+        },
+        required=(
+            "negotiation_id",
+            "decision_source",
+            "selected_slot_id",
+            "requester_confirmation",
+        ),
+    ),
+    "feishu_meeting_negotiation_case_stop": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "operator_user_id": {"type": "string"},
+            "lease_owner": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        required=("negotiation_id",),
+    ),
     "feishu_meeting_escalation_retry_tick": _object_schema(
         {
             "workspace_id": {"type": "string"},
@@ -463,6 +520,41 @@ def register(ctx) -> None:
         handler=feishu_meeting_monitor_stop,
         description="Stop one RSVP monitor and remove its cron job.",
         schema=_function_schema("feishu_meeting_monitor_stop"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_negotiation_case_start",
+        handler=feishu_meeting_negotiation_case_start,
+        description="Create or retrieve a durable meeting time negotiation case.",
+        schema=_function_schema("feishu_meeting_negotiation_case_start"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_negotiation_case_tick",
+        handler=feishu_meeting_negotiation_case_tick,
+        description="Run one durable meeting time negotiation tick under lease.",
+        schema=_function_schema("feishu_meeting_negotiation_case_tick"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_negotiation_case_submit_reply",
+        handler=feishu_meeting_negotiation_case_submit_reply,
+        description="Submit a correlated participant reply into a durable negotiation case.",
+        schema=_function_schema("feishu_meeting_negotiation_case_submit_reply"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_negotiation_case_finalize",
+        handler=feishu_meeting_negotiation_case_finalize,
+        description="Create the deterministic finalization attempt for a durable negotiation case.",
+        schema=_function_schema("feishu_meeting_negotiation_case_finalize"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_negotiation_case_stop",
+        handler=feishu_meeting_negotiation_case_stop,
+        description="Cancel a durable negotiation case under lease.",
+        schema=_function_schema("feishu_meeting_negotiation_case_stop"),
         toolset="meeting-coordinator",
     )
     ctx.register_tool(
