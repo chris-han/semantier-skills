@@ -1,5 +1,5 @@
 name: feishu_meeting_coordinator
-version: 0.1.0
+version: 0.2.0
 description: Feishu meeting RSVP monitoring and follow-up orchestration.
 author: Semantier
 kind: standalone
@@ -7,3 +7,35 @@ platforms:
   - linux
   - macos
   - windows
+webapi:
+  enabled: true
+  module: feishu_meeting_coordinator.webapi
+ui_extensions:
+  - id: feishu_meeting_negotiation
+    host_screen: skills
+    operations_host: kanban
+    task_signal:
+      field: task_type
+      value: feishu_meeting_negotiation
+    label: Feishu Meeting Negotiation
+    description: Render negotiation cards and actions on the Kanban board.
+    components:
+      card_renderer:
+        module: ./dashboard/ui/NegotiationCard
+        export: default
+        props_version: "1.0.0"
+      detail_drawer:
+        module: ./dashboard/ui/NegotiationDetailDrawer
+        export: default
+        props_version: "1.0.0"
+    actions:
+      - id: nudge_unblock
+        label: Nudge / Unblock
+        plugin_api: POST /plugins/meeting-coordinator/negotiations/{negotiation_id}/nudge-unblock
+      - id: finalize
+        label: Finalize
+        plugin_api: POST /plugins/meeting-coordinator/negotiations/{negotiation_id}/finalize
+      - id: cancel
+        label: Cancel
+        plugin_api: POST /plugins/meeting-coordinator/negotiations/{negotiation_id}/cancel
+    host_version_requirement: ">=0.2.0"

@@ -17,6 +17,7 @@ from .tools import (
     feishu_meeting_monitor_stop,
     feishu_meeting_monitor_tick,
     feishu_meeting_negotiation_case_finalize,
+    feishu_meeting_negotiation_kanban_worker_tick,
     feishu_meeting_negotiation_case_start,
     feishu_meeting_negotiation_case_stop,
     feishu_meeting_negotiation_case_submit_reply,
@@ -125,7 +126,10 @@ TOOL_SCHEMAS = {
     ),
     "feishu_chat_members_get": _object_schema(
         {
-            "chat_id": {"type": "string", "description": "Feishu chat_id returned by feishu_chats_search."},
+            "chat_id": {
+                "type": "string",
+                "description": "Feishu chat_id returned by feishu_chats_search.",
+            },
             "member_id_type": {
                 "type": "string",
                 "enum": ["open_id", "union_id", "user_id"],
@@ -136,7 +140,10 @@ TOOL_SCHEMAS = {
     ),
     "feishu_meeting_create": _object_schema(
         {
-            "title": {"type": "string", "description": "Meeting title. Infer from the user's request when clear."},
+            "title": {
+                "type": "string",
+                "description": "Meeting title. Infer from the user's request when clear.",
+            },
             "start_time": {
                 "type": "string",
                 "description": "Meeting start time as ISO-8601 or an unambiguous local datetime.",
@@ -162,12 +169,18 @@ TOOL_SCHEMAS = {
             },
             "attendee": {
                 "description": "Single attendee alias for attendees.",
-                "oneOf": [{"type": "string"}, {"type": "object", "additionalProperties": True}],
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "object", "additionalProperties": True},
+                ],
             },
             "participants": _ATTENDEE_SCHEMA,
             "participant": {
                 "description": "Single participant alias for attendees.",
-                "oneOf": [{"type": "string"}, {"type": "object", "additionalProperties": True}],
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "object", "additionalProperties": True},
+                ],
             },
             "description": {"type": "string"},
             "location": {"type": "string"},
@@ -204,7 +217,13 @@ TOOL_SCHEMAS = {
             "timezone": {"type": "string", "default": "Asia/Shanghai"},
             "max_rounds": {"type": "integer", "minimum": 1, "default": 3},
         },
-        required=("title", "requester_open_id", "attendee_open_ids", "candidate_slots", "duration_minutes"),
+        required=(
+            "title",
+            "requester_open_id",
+            "attendee_open_ids",
+            "candidate_slots",
+            "duration_minutes",
+        ),
     ),
     "feishu_meeting_negotiation_next_round_prompts": _object_schema(
         {
@@ -238,7 +257,12 @@ TOOL_SCHEMAS = {
             "event_id": {"type": "string"},
             "calendar_id": {"type": "string"},
             "requester_open_id": {"type": "string"},
-            "page_size": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+            "page_size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 50,
+            },
         },
         required=("event_id",),
     ),
@@ -303,7 +327,10 @@ TOOL_SCHEMAS = {
             "meeting_start_time": {"type": "string"},
             "meeting_end_time": {"type": "string"},
             "timezone": {"type": "string", "default": "Asia/Shanghai"},
-            "attendees": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            "attendees": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
             "creator_delivery_binding": {
                 **_CREATOR_BINDING_SCHEMA,
                 "description": (
@@ -332,16 +359,26 @@ TOOL_SCHEMAS = {
             "monitor_id": {"type": "string"},
             "event_revision_id": {"type": "string"},
             "trigger_attendee_user_id": {"type": "string"},
-            "ensure_scheduler": {"type": "boolean", "default": True},
+            "ensure_kanban": {"type": "boolean", "default": True},
         },
         required=("monitor_id", "event_revision_id", "trigger_attendee_user_id"),
     ),
     "feishu_meeting_negotiation_case_tick": _object_schema(
         {
             "negotiation_id": {"type": "string"},
-            "lease_owner": {"type": "string"},
         },
         required=("negotiation_id",),
+    ),
+    "feishu_meeting_negotiation_kanban_worker_tick": _object_schema(
+        {
+            "kanban_task_id": {"type": "string"},
+            "task_id": {"type": "string"},
+            "task_body": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+            "body": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+            "negotiation_id": {"type": "string"},
+            "session_id": {"type": "string"},
+            "user_id": {"type": "string"},
+        },
     ),
     "feishu_meeting_negotiation_case_submit_reply": _object_schema(
         {
@@ -349,15 +386,27 @@ TOOL_SCHEMAS = {
             "participant_user_id": {"type": "string"},
             "message_id": {"type": "string"},
             "reply_text": {"type": "string"},
+            "callback_origin": {"type": "boolean"},
             "callback_signature_valid": {"type": "boolean"},
             "outbound_message_event_id": {"type": "string"},
+            "workspace_id": {"type": "string"},
+            "feishu_app_id": {"type": "string"},
+            "sender_open_id": {"type": "string"},
+            "provider_message_id": {"type": "string"},
+            "thread_id": {"type": "string"},
+            "root_message_id": {"type": "string"},
+            "received_at_utc": {"type": "string"},
+            "raw_text": {"type": "string"},
+            "payload": {"type": "object", "additionalProperties": True},
         },
-        required=("negotiation_id", "participant_user_id", "message_id"),
     ),
     "feishu_meeting_negotiation_case_finalize": _object_schema(
         {
             "negotiation_id": {"type": "string"},
-            "decision_source": {"type": "string", "enum": ["consent", "requester_final_decision"]},
+            "decision_source": {
+                "type": "string",
+                "enum": ["consent", "requester_final_decision"],
+            },
             "selected_slot_id": {"type": "string"},
             "requester_confirmation": {"type": "boolean"},
             "requested_by_user_id": {"type": "string"},
@@ -374,7 +423,6 @@ TOOL_SCHEMAS = {
         {
             "negotiation_id": {"type": "string"},
             "operator_user_id": {"type": "string"},
-            "lease_owner": {"type": "string"},
             "reason": {"type": "string"},
         },
         required=("negotiation_id",),
@@ -534,6 +582,13 @@ def register(ctx) -> None:
         handler=feishu_meeting_negotiation_case_tick,
         description="Run one durable meeting time negotiation tick under lease.",
         schema=_function_schema("feishu_meeting_negotiation_case_tick"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_negotiation_kanban_worker_tick",
+        handler=feishu_meeting_negotiation_kanban_worker_tick,
+        description="Run one claimed Kanban worker tick for a meeting time negotiation task.",
+        schema=_function_schema("feishu_meeting_negotiation_kanban_worker_tick"),
         toolset="meeting-coordinator",
     )
     ctx.register_tool(

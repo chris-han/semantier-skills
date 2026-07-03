@@ -18,10 +18,9 @@ def _prompt_root() -> Path:
         if root.exists():
             return root
         raise RuntimeError(f"meeting coordinator prompt root does not exist: {root}")
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "src" / "prompts" / "meeting_coordinator"
-        if candidate.exists():
-            return candidate
+    root = Path(__file__).resolve().parent / "prompts"
+    if root.exists():
+        return root
     raise RuntimeError("meeting coordinator prompt assets not found")
 
 

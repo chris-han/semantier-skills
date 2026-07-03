@@ -15,7 +15,7 @@ def _store_from_args(args: Any):
     injected = getattr(args, "store", None)
     if injected is not None:
         return injected
-    from agents.meeting_coordinator_store import MeetingCoordinatorStore
+    from .store import MeetingCoordinatorStore
 
     return MeetingCoordinatorStore()
 
