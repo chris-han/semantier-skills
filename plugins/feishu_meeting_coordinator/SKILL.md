@@ -25,12 +25,16 @@ When a user asks for RSVP status, call live Feishu attendee status first. Do not
 
 The plugin handles follow-up reminders, creator escalation, delivery retry, and cron repair.
 
+For a Kanban task whose body has `metadata.task_type` equal to `feishu_meeting_negotiation`, run the durable negotiation worker through `feishu_meeting_negotiation_kanban_worker_tick` with the Kanban task id and full task body. Do not manually send ad hoc messages for `pending_decliner_input`; the worker calls the deterministic negotiation tick, sends the decliner prompt once, and blocks or completes the Kanban task according to persisted state.
+
 Use the registered Feishu tools directly for contact lookup, chat lookup, meeting creation, attendee messaging, direct RSVP checks, replacement slot proposals, and meeting-time updates:
 
 - `feishu_contacts_search`
 - `feishu_chats_search`
 - `feishu_chat_members_get`
 - `feishu_meeting_create`
+- `feishu_meeting_negotiation_case_tick`
+- `feishu_meeting_negotiation_kanban_worker_tick`
 - `feishu_meeting_negotiation_start`
 - `feishu_meeting_negotiation_next_round_prompts`
 - `feishu_meeting_negotiation_submit_response`

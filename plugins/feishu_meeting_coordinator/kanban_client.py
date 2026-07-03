@@ -106,3 +106,12 @@ class HermesKanbanClient:
                     conn, task_id, summary=summary, metadata=metadata
                 )
             )
+
+    def delete(self, task_id: str) -> bool:
+        with self._connection() as (kanban_db, conn):
+            kanban_db.reclaim_task(
+                conn,
+                task_id,
+                reason="feishu meeting monitor cleanup",
+            )
+            return bool(kanban_db.delete_task(conn, task_id))

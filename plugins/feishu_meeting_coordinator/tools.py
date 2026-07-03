@@ -1131,6 +1131,8 @@ def _prepare_monitor_payload(payload: dict[str, Any]) -> dict[str, Any]:
     prepared["creator_delivery_binding"] = _creator_delivery_binding(
         metadata, requester_open_id
     )
+    if prepared["creator_delivery_binding"].get("session_id"):
+        prepared["session_id"] = prepared["creator_delivery_binding"]["session_id"]
     if not prepared.get("language"):
         prepared["language"] = (
             metadata.get("language") or payload.get("locale") or payload.get("language")

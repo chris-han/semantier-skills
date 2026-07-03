@@ -217,9 +217,6 @@ class MeetingCoordinatorStore:
                 ON meeting_time_negotiations(workspace_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_meeting_time_negotiations_expiry
                 ON meeting_time_negotiations(status, expires_at_utc);
-                CREATE INDEX IF NOT EXISTS idx_meeting_time_negotiations_kanban_task
-                ON meeting_time_negotiations(kanban_task_id);
-
                 CREATE TABLE IF NOT EXISTS meeting_time_negotiation_participants (
                     negotiation_id TEXT NOT NULL,
                     attendee_user_id TEXT NOT NULL,
@@ -356,8 +353,6 @@ class MeetingCoordinatorStore:
                 ON meeting_time_negotiation_events(negotiation_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_meeting_time_events_type
                 ON meeting_time_negotiation_events(negotiation_id, event_type);
-                CREATE INDEX IF NOT EXISTS idx_meeting_time_events_kanban
-                ON meeting_time_negotiation_events(kanban_task_id, kanban_run_id);
                 """
             )
             attendee_columns = {
@@ -433,6 +428,12 @@ class MeetingCoordinatorStore:
                 conn.execute(
                     "ALTER TABLE meeting_time_negotiation_events ADD COLUMN kanban_run_id INTEGER"
                 )
+            conn.executescript(
+                """
+                CREATE INDEX IF NOT EXISTS idx_meeting_time_events_kanban
+                ON meeting_time_negotiation_events(kanban_task_id, kanban_run_id);
+                """
+            )
 
     def _remove_negotiation_process_control_columns(
         self,
@@ -1339,6 +1340,57 @@ class MeetingCoordinatorStore:
                 payload={"kanban_task_id": kanban_task_id},
             )
         return dict(row)
+
+    def list_negotiations_for_monitor(self, monitor_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM meeting_time_negotiations
+                WHERE monitor_id=?
+                ORDER BY created_at, negotiation_id
+                """,
+                (monitor_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_negotiation_kanban_task_cleaned(
+        self,
+        negotiation_id: str,
+        *,
+        kanban_task_id: str,
+        reason: str,
+        actor_id: str = "meeting-rsvp-monitor",
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(negotiation_id)
+            conn.execute(
+                """
+                UPDATE meeting_time_negotiations
+                SET kanban_task_id=NULL, updated_at=?
+                WHERE negotiation_id=? AND kanban_task_id=?
+                """,
+                (now, negotiation_id, kanban_task_id),
+            )
+            self._record_negotiation_event(
+                conn,
+                negotiation_id=negotiation_id,
+                event_type="KANBAN_TASK_CLEANED",
+                actor_type="system",
+                actor_id=actor_id,
+                kanban_task_id=kanban_task_id,
+                payload={"kanban_task_id": kanban_task_id, "reason": reason},
+            )
+            refreshed = conn.execute(
+                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+        return dict(refreshed)
 
     def set_message_kanban_comment(
         self,

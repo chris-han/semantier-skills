@@ -78,6 +78,8 @@ class KanbanClient(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> bool: ...
 
+    def delete(self, task_id: str) -> bool: ...
+
 
 def _prompt(name: str, **values: str) -> str:
     text = (_PROMPTS_ROOT / name).read_text(encoding="utf-8")
@@ -549,6 +551,37 @@ def _dismiss_monitor_cron(monitor: dict[str, Any], cron: CronClient | None) -> N
         cron.disable_job(cron_job_id)  # type: ignore[attr-defined]
 
 
+def _cleanup_monitor_owned_kanban_tasks(
+    monitor: dict[str, Any],
+    *,
+    store: MeetingCoordinatorStore,
+    kanban: KanbanClient | None,
+    reason: str,
+) -> list[dict[str, Any]]:
+    if str(monitor.get("status") or "") == "negotiating":
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for negotiation in store.list_negotiations_for_monitor(str(monitor["monitor_id"])):
+        task_id = str(negotiation.get("kanban_task_id") or "").strip()
+        if not task_id:
+            continue
+        client = _resolve_kanban_client(kanban)
+        deleted = bool(client.delete(task_id))
+        store.mark_negotiation_kanban_task_cleaned(
+            str(negotiation["negotiation_id"]),
+            kanban_task_id=task_id,
+            reason=reason,
+        )
+        cleaned.append(
+            {
+                "negotiation_id": negotiation["negotiation_id"],
+                "kanban_task_id": task_id,
+                "deleted": deleted,
+            }
+        )
+    return cleaned
+
+
 def _monitor_is_terminal(monitor: dict[str, Any]) -> bool:
     return str(monitor.get("status") or "") in {
         "complete",
@@ -652,6 +685,16 @@ def _resolve_kanban_worker_boundary(
     return boundary
 
 
+def _session_id_from_payload_json(raw_payload: Any) -> str:
+    try:
+        payload = json.loads(str(raw_payload or "{}"))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("session_id") or "").strip()
+
+
 def negotiation_kanban_worker_tick(
     payload: dict[str, Any],
     *,
@@ -677,6 +720,9 @@ def negotiation_kanban_worker_tick(
         raise ValueError("kanban task metadata missing negotiation_id")
     if not workspace_id:
         raise ValueError("kanban task metadata missing workspace_id")
+    negotiation = store.get_negotiation(negotiation_id)
+    if str(negotiation["workspace_id"]) != workspace_id:
+        raise PermissionError("kanban task workspace does not match negotiation")
     if not session_id:
         raise ValueError("kanban task metadata missing session_id")
 
@@ -690,9 +736,6 @@ def negotiation_kanban_worker_tick(
     if bool(getattr(policy, "provider_fallback_enabled", False)):
         raise RuntimeError("kanban worker boundary provider fallback must be disabled")
 
-    negotiation = store.get_negotiation(negotiation_id)
-    if str(negotiation["workspace_id"]) != workspace_id:
-        raise PermissionError("kanban task workspace does not match negotiation")
     if str(negotiation.get("kanban_task_id") or "") not in {"", task_id}:
         raise PermissionError("kanban task does not match negotiation")
     if not str(negotiation.get("kanban_task_id") or ""):
@@ -1423,6 +1466,7 @@ def _complete_all_exhausted_unanswered(
     store: MeetingCoordinatorStore,
     cron: CronClient | None,
     delivery_client: DeliveryClient | None,
+    kanban: KanbanClient | None = None,
 ) -> dict[str, Any]:
     reason = "all_attendees_followup_limit_reached"
     message = _render_cancel_suggestion(monitor, attendees)
@@ -1461,6 +1505,12 @@ def _complete_all_exhausted_unanswered(
                 status="sent" if delivered else "pending",
             )
     completed = store.mark_monitor_complete(monitor["monitor_id"])
+    cleaned = _cleanup_monitor_owned_kanban_tasks(
+        completed,
+        store=store,
+        kanban=kanban,
+        reason="monitor_complete_all_exhausted",
+    )
     _dismiss_monitor_cron(completed, cron)
     return {
         "monitor_id": monitor["monitor_id"],
@@ -1472,6 +1522,7 @@ def _complete_all_exhausted_unanswered(
         "followups_sent": 0,
         "escalations_sent": 1,
         "creator_notification_sent": delivered,
+        "kanban_cleanup": cleaned,
     }
 
 
@@ -1486,6 +1537,12 @@ def monitor_tick(
 ) -> dict[str, Any]:
     monitor = store.get_monitor(str(payload["monitor_id"]))
     if _monitor_is_terminal(monitor):
+        cleaned = _cleanup_monitor_owned_kanban_tasks(
+            monitor,
+            store=store,
+            kanban=kanban,
+            reason="monitor_already_terminal",
+        )
         _dismiss_monitor_cron(monitor, cron)
         return {
             "monitor_id": monitor["monitor_id"],
@@ -1494,6 +1551,7 @@ def monitor_tick(
             "pending_attendees": [],
             "followups_sent": 0,
             "escalations_sent": 0,
+            "kanban_cleanup": cleaned,
         }
     interval_minutes = _followup_interval_minutes(payload, monitor, cron)
     if "max_followups" in payload and payload.get("max_followups") is not None:
@@ -1522,6 +1580,8 @@ def monitor_tick(
                 negotiation_id=str(negotiation["negotiation_id"]),
                 store=store,
                 kanban=kanban,
+                session_id=_session_id_from_payload_json(monitor.get("payload_json"))
+                or None,
             )
             store.mark_monitor_negotiating(
                 monitor["monitor_id"],
@@ -1556,6 +1616,12 @@ def monitor_tick(
         }
         return result
     if negotiation_ids and negotiation_kanban_errors:
+        cleaned = _cleanup_monitor_owned_kanban_tasks(
+            monitor,
+            store=store,
+            kanban=kanban,
+            reason="negotiation_handoff_failed",
+        )
         return {
             "monitor_id": monitor["monitor_id"],
             "status": "negotiation_handoff_failed",
@@ -1566,10 +1632,17 @@ def monitor_tick(
             "pending_attendees": [],
             "followups_sent": 0,
             "escalations_sent": 0,
+            "kanban_cleanup": cleaned,
         }
     attendees = store.list_attendees(monitor["monitor_id"])
     if _all_terminal(attendees):
         completed = store.mark_monitor_complete(monitor["monitor_id"])
+        cleaned = _cleanup_monitor_owned_kanban_tasks(
+            completed,
+            store=store,
+            kanban=kanban,
+            reason="monitor_complete_all_responded",
+        )
         _dismiss_monitor_cron(completed, cron)
         return {
             "monitor_id": monitor["monitor_id"],
@@ -1579,6 +1652,7 @@ def monitor_tick(
             "pending_attendees": [],
             "followups_sent": 0,
             "escalations_sent": 0,
+            "kanban_cleanup": cleaned,
         }
 
     if _all_exhausted_unanswered(attendees, max_followups=max_followups):
@@ -1588,12 +1662,19 @@ def monitor_tick(
             store=store,
             cron=cron,
             delivery_client=delivery_client,
+            kanban=kanban,
         )
 
     pending = store.list_pending_followup_attendees(monitor["monitor_id"])
 
     if not pending:
         completed = store.mark_monitor_complete(monitor["monitor_id"])
+        cleaned = _cleanup_monitor_owned_kanban_tasks(
+            completed,
+            store=store,
+            kanban=kanban,
+            reason="monitor_complete_no_pending_attendees",
+        )
         _dismiss_monitor_cron(completed, cron)
         return {
             "monitor_id": monitor["monitor_id"],
@@ -1603,6 +1684,7 @@ def monitor_tick(
             "pending_attendees": [],
             "followups_sent": 0,
             "escalations_sent": 0,
+            "kanban_cleanup": cleaned,
         }
 
     followups_sent = 0
@@ -1733,13 +1815,25 @@ def monitor_stop(
     *,
     store: MeetingCoordinatorStore,
     cron: CronClient,
+    kanban: KanbanClient | None = None,
 ) -> dict[str, Any]:
     monitor_id = str(payload["monitor_id"])
     monitor = store.get_monitor(monitor_id)
     _dismiss_monitor_cron(monitor, cron)
     reason = str(payload.get("reason") or "operator stop")
     cancelled = store.mark_monitor_cancelled(monitor_id, detail=reason)
-    return {"monitor_id": monitor_id, "stopped": True, "status": cancelled["status"]}
+    cleaned = _cleanup_monitor_owned_kanban_tasks(
+        cancelled,
+        store=store,
+        kanban=kanban,
+        reason=f"monitor_stop:{reason}",
+    )
+    return {
+        "monitor_id": monitor_id,
+        "stopped": True,
+        "status": cancelled["status"],
+        "kanban_cleanup": cleaned,
+    }
 
 
 def escalation_retry_tick(
