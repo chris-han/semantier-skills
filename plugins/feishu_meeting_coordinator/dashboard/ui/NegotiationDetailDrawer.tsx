@@ -11,6 +11,17 @@ function text(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.trim() ? value : fallback;
 }
 
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+}
+
+function safeCount(value: unknown, fallback = 0): number {
+  return Number.isFinite(Number(value)) ? Number(value) : fallback;
+}
+
 export default function NegotiationDetailDrawer({
   negotiationId,
   metadata,
@@ -19,6 +30,15 @@ export default function NegotiationDetailDrawer({
 }: NegotiationDetailDrawerProps) {
   const title = text(metadata.meeting_title, "Meeting negotiation");
   const status = text(metadata.status, "pending");
+  const followupStatus = text(metadata.followup_cron_status, "not_created");
+  const nextFollowupAt = text(metadata.next_followup_at, "not scheduled");
+  const lastTickAt = text(metadata.followup_cron_last_tick_at, "never");
+  const failureCount = safeCount(metadata.followup_cron_failure_count, 0);
+  const declinedAttendee = text(metadata.declined_attendee_name, "Declined attendee");
+  const bestSlot = text(metadata.best_slot, "No candidate slot");
+  const bestSlotId = text(metadata.best_slot_id);
+  const missingAttendees = asStringArray(metadata.missing_required_attendee_names);
+  const showRequesterActions = status === "awaiting_requester_decision";
 
   return (
     <section
@@ -36,6 +56,22 @@ export default function NegotiationDetailDrawer({
         <dd>{status}</dd>
         <dt>Negotiation</dt>
         <dd>{negotiationId || "unassigned"}</dd>
+        <dt>Declined attendee</dt>
+        <dd>{declinedAttendee}</dd>
+        <dt>Follow-up cron</dt>
+        <dd>{followupStatus}</dd>
+        <dt>Next follow-up</dt>
+        <dd>{nextFollowupAt}</dd>
+        <dt>Last cron tick</dt>
+        <dd>{lastTickAt}</dd>
+        <dt>Cron failures</dt>
+        <dd>{failureCount}</dd>
+        <dt>Best slot</dt>
+        <dd>{bestSlot}</dd>
+        <dt>Missing required attendees</dt>
+        <dd>
+          {missingAttendees.length > 0 ? missingAttendees.join(", ") : "none"}
+        </dd>
       </dl>
       <footer>
         <button type="button" onClick={() => onAction("nudge_unblock")}>
@@ -44,9 +80,43 @@ export default function NegotiationDetailDrawer({
         <button type="button" onClick={() => onAction("finalize")}>
           Finalize
         </button>
-        <button type="button" onClick={() => onAction("cancel")}>
-          Cancel
-        </button>
+        {showRequesterActions ? (
+          <>
+            <button
+              type="button"
+              onClick={() =>
+                onAction("requester_decision", { action: "requester_keep_original" })
+              }
+            >
+              Keep original
+            </button>
+            {bestSlotId ? (
+              <button
+                type="button"
+                onClick={() =>
+                  onAction("requester_decision", {
+                    action: "requester_select_slot",
+                    slot_id: bestSlotId,
+                  })
+                }
+              >
+                Select best slot
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() =>
+                onAction("requester_decision", { action: "requester_cancel" })
+              }
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={() => onAction("cancel")}>
+            Cancel
+          </button>
+        )}
         <a href="/kanban" aria-label="Open full Kanban task history">
           Kanban
         </a>

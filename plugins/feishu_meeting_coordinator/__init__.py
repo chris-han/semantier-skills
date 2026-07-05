@@ -21,9 +21,13 @@ from .tools import (
     feishu_meeting_negotiation_case_start,
     feishu_meeting_negotiation_case_stop,
     feishu_meeting_negotiation_case_submit_reply,
+    feishu_meeting_requester_decision,
     feishu_meeting_negotiation_case_tick,
     feishu_meeting_negotiation_finalize,
     feishu_meeting_negotiation_next_round_prompts,
+    feishu_meeting_followup_cron_ensure,
+    feishu_meeting_followup_cron_stop,
+    feishu_meeting_followup_cron_tick,
     feishu_meeting_negotiation_start,
     feishu_meeting_negotiation_submit_response,
     feishu_meeting_new_time_propose,
@@ -369,6 +373,26 @@ TOOL_SCHEMAS = {
         },
         required=("negotiation_id",),
     ),
+    "feishu_meeting_followup_cron_ensure": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "schedule": {"type": "string", "default": "every 2m"},
+        },
+        required=("negotiation_id",),
+    ),
+    "feishu_meeting_followup_cron_stop": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "reason": {"type": "string", "default": "operator_stop"},
+        },
+        required=("negotiation_id",),
+    ),
+    "feishu_meeting_followup_cron_tick": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+        },
+        required=("negotiation_id",),
+    ),
     "feishu_meeting_negotiation_kanban_worker_tick": _object_schema(
         {
             "kanban_task_id": {"type": "string"},
@@ -415,9 +439,29 @@ TOOL_SCHEMAS = {
         required=(
             "negotiation_id",
             "decision_source",
-            "selected_slot_id",
             "requester_confirmation",
+            "requested_by_user_id",
         ),
+    ),
+    "feishu_meeting_requester_decision": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "action": {
+                "type": "string",
+                "enum": [
+                    "requester_cancel",
+                    "requester_keep_original",
+                    "keep_original",
+                    "requester_select_slot",
+                    "requester_select_time",
+                    "select_slot",
+                ],
+            },
+            "slot_id": {"type": "string"},
+            "selected_slot_id": {"type": "string"},
+            "requested_by_user_id": {"type": "string"},
+        },
+        required=("negotiation_id", "action", "requested_by_user_id"),
     ),
     "feishu_meeting_negotiation_case_stop": _object_schema(
         {
@@ -585,6 +629,27 @@ def register(ctx) -> None:
         toolset="meeting-coordinator",
     )
     ctx.register_tool(
+        name="feishu_meeting_followup_cron_ensure",
+        handler=feishu_meeting_followup_cron_ensure,
+        description="Ensure a local no-agent follow-up cron job for a negotiation.",
+        schema=_function_schema("feishu_meeting_followup_cron_ensure"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_followup_cron_stop",
+        handler=feishu_meeting_followup_cron_stop,
+        description="Stop a local no-agent follow-up cron job for a negotiation.",
+        schema=_function_schema("feishu_meeting_followup_cron_stop"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_followup_cron_tick",
+        handler=feishu_meeting_followup_cron_tick,
+        description="Run one follow-up negotiation tick for an active negotiation.",
+        schema=_function_schema("feishu_meeting_followup_cron_tick"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
         name="feishu_meeting_negotiation_kanban_worker_tick",
         handler=feishu_meeting_negotiation_kanban_worker_tick,
         description="Run one claimed Kanban worker tick for a meeting time negotiation task.",
@@ -603,6 +668,13 @@ def register(ctx) -> None:
         handler=feishu_meeting_negotiation_case_finalize,
         description="Create the deterministic finalization attempt for a durable negotiation case.",
         schema=_function_schema("feishu_meeting_negotiation_case_finalize"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_requester_decision",
+        handler=feishu_meeting_requester_decision,
+        description="Apply a requester-side decision for a durable negotiation case.",
+        schema=_function_schema("feishu_meeting_requester_decision"),
         toolset="meeting-coordinator",
     )
     ctx.register_tool(

@@ -14,6 +14,12 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _parse_utc_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
 def _db_path() -> Path:
     root = (
         Path(os.environ.get("SEMANTIER_LOCAL_STATE_DIR") or ".semantier-home")
@@ -60,6 +66,16 @@ TERMINAL_NEGOTIATION_STATUSES = {
     "expired",
     "failed",
 }
+FOLLOWUP_CRON_STATUSES = {
+    "not_created",
+    "active",
+    "paused",
+    "disabled",
+    "failed",
+    "removed",
+}
+NEGOTIATION_CASE_LOCK_TTL_SECONDS = 90
+_UNSET = object()
 GUARDED_NEGOTIATION_PATCH_FIELDS = {
     "negotiation_id",
     "workspace_id",
@@ -174,6 +190,7 @@ class MeetingCoordinatorStore:
                     event_revision_id TEXT NOT NULL,
                     calendar_id TEXT NOT NULL,
                     creator_user_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL DEFAULT '',
                     declined_attendee_user_id TEXT,
                     status TEXT NOT NULL CHECK (status IN (
                         'pending_decliner_input',
@@ -206,6 +223,11 @@ class MeetingCoordinatorStore:
                     updated_at TEXT NOT NULL,
                     completed_at TEXT,
                     kanban_task_id TEXT,
+                    followup_cron_job_id TEXT,
+                    followup_cron_status TEXT NOT NULL DEFAULT 'not_created',
+                    followup_cron_last_tick_at TEXT,
+                    followup_cron_failure_count INTEGER NOT NULL DEFAULT 0,
+                    next_followup_at TEXT,
                     expires_at_utc TEXT NOT NULL,
                     finalize_status TEXT NOT NULL DEFAULT 'not_started',
                     finalize_attempt_id TEXT,
@@ -235,6 +257,8 @@ class MeetingCoordinatorStore:
                     latest_slot_id TEXT,
                     last_contacted_at TEXT,
                     last_response_at TEXT,
+                    followup_count INTEGER NOT NULL DEFAULT 0,
+                    last_followup_at TEXT,
                     delivery_status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -243,6 +267,23 @@ class MeetingCoordinatorStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_meeting_time_participants_delivery
                 ON meeting_time_negotiation_participants(negotiation_id, delivery_status, last_contacted_at);
+                CREATE INDEX IF NOT EXISTS idx_meeting_time_participants_followup
+                ON meeting_time_negotiation_participants(
+                    negotiation_id,
+                    required_for_consent,
+                    followup_count,
+                    last_followup_at
+                );
+
+                CREATE TABLE IF NOT EXISTS meeting_time_negotiation_case_locks (
+                    negotiation_id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    lease_expires_at TEXT NOT NULL,
+                    acquired_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(negotiation_id) REFERENCES meeting_time_negotiations(negotiation_id)
+                        ON DELETE CASCADE
+                );
 
                 CREATE TABLE IF NOT EXISTS meeting_time_candidate_slots (
                     slot_id TEXT PRIMARY KEY,
@@ -385,11 +426,52 @@ class MeetingCoordinatorStore:
                     "PRAGMA table_info(meeting_time_negotiations)"
                 ).fetchall()
             }
+            for col_name in (
+                "session_id",
+                "followup_cron_job_id",
+                "followup_cron_status",
+                "followup_cron_last_tick_at",
+                "followup_cron_failure_count",
+                "next_followup_at",
+            ):
+                if col_name in negotiation_columns:
+                    continue
+                if col_name == "session_id":
+                    conn.execute(
+                        "ALTER TABLE meeting_time_negotiations ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
+                    )
+                elif col_name == "followup_cron_status":
+                    conn.execute(
+                        "ALTER TABLE meeting_time_negotiations ADD COLUMN followup_cron_status TEXT NOT NULL DEFAULT 'not_created'"
+                    )
+                elif col_name == "followup_cron_failure_count":
+                    conn.execute(
+                        "ALTER TABLE meeting_time_negotiations ADD COLUMN followup_cron_failure_count INTEGER NOT NULL DEFAULT 0"
+                    )
+                else:
+                    conn.execute(
+                        f"ALTER TABLE meeting_time_negotiations ADD COLUMN {col_name} TEXT"
+                    )
+                negotiation_columns.add(col_name)
             if "kanban_task_id" not in negotiation_columns:
                 conn.execute(
                     "ALTER TABLE meeting_time_negotiations ADD COLUMN kanban_task_id TEXT"
                 )
                 negotiation_columns.add("kanban_task_id")
+            participant_columns = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(meeting_time_negotiation_participants)"
+                ).fetchall()
+            }
+            if "followup_count" not in participant_columns:
+                conn.execute(
+                    "ALTER TABLE meeting_time_negotiation_participants ADD COLUMN followup_count INTEGER NOT NULL DEFAULT 0"
+                )
+            if "last_followup_at" not in participant_columns:
+                conn.execute(
+                    "ALTER TABLE meeting_time_negotiation_participants ADD COLUMN last_followup_at TEXT"
+                )
             self._remove_negotiation_process_control_columns(
                 conn, columns=negotiation_columns
             )
@@ -402,6 +484,28 @@ class MeetingCoordinatorStore:
                 ON meeting_time_negotiations(status, expires_at_utc);
                 CREATE INDEX IF NOT EXISTS idx_meeting_time_negotiations_kanban_task
                 ON meeting_time_negotiations(kanban_task_id);
+                CREATE INDEX IF NOT EXISTS idx_meeting_time_negotiations_followup_status
+                ON meeting_time_negotiations(followup_cron_status);
+                CREATE INDEX IF NOT EXISTS idx_meeting_time_participants_followup
+                ON meeting_time_negotiation_participants(
+                    negotiation_id,
+                    required_for_consent,
+                    followup_count,
+                    last_followup_at
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS meeting_time_negotiation_case_locks (
+                    negotiation_id TEXT PRIMARY KEY,
+                    owner TEXT NOT NULL,
+                    lease_expires_at TEXT NOT NULL,
+                    acquired_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(negotiation_id) REFERENCES meeting_time_negotiations(negotiation_id)
+                        ON DELETE CASCADE
+                )
                 """
             )
             message_columns = {
@@ -462,6 +566,7 @@ class MeetingCoordinatorStore:
                 event_revision_id TEXT NOT NULL,
                 calendar_id TEXT NOT NULL,
                 creator_user_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
                 declined_attendee_user_id TEXT,
                 status TEXT NOT NULL CHECK (status IN (
                     'pending_decliner_input',
@@ -497,6 +602,11 @@ class MeetingCoordinatorStore:
                 expires_at_utc TEXT NOT NULL,
                 finalize_status TEXT NOT NULL DEFAULT 'not_started',
                 finalize_attempt_id TEXT,
+                followup_cron_job_id TEXT,
+                followup_cron_status TEXT NOT NULL DEFAULT 'not_created',
+                followup_cron_last_tick_at TEXT,
+                followup_cron_failure_count INTEGER NOT NULL DEFAULT 0,
+                next_followup_at TEXT,
                 trigger_attendee_user_ids_json TEXT NOT NULL,
                 UNIQUE(monitor_id, event_revision_id),
                 FOREIGN KEY(monitor_id) REFERENCES meeting_rsvp_monitors(monitor_id)
@@ -504,23 +614,31 @@ class MeetingCoordinatorStore:
             INSERT INTO meeting_time_negotiations_new(
                 negotiation_id, monitor_id, workspace_id, event_id,
                 event_revision_id, calendar_id, creator_user_id,
-                declined_attendee_user_id, status, current_round, max_rounds,
+                session_id, declined_attendee_user_id, status, current_round, max_rounds,
                 duration_minutes, timezone, original_start_time,
                 original_end_time, selected_slot_json,
                 creator_delivery_binding_json, payload_json,
                 last_agent_error, failure_reason, created_at, updated_at,
-                completed_at, kanban_task_id, expires_at_utc, finalize_status,
+                completed_at, kanban_task_id, followup_cron_job_id, followup_cron_status,
+                followup_cron_last_tick_at, followup_cron_failure_count, next_followup_at,
+                expires_at_utc, finalize_status,
                 finalize_attempt_id, trigger_attendee_user_ids_json
             )
             SELECT
                 negotiation_id, monitor_id, workspace_id, event_id,
                 event_revision_id, calendar_id, creator_user_id,
+                COALESCE(session_id, ''),
                 declined_attendee_user_id, status, current_round, max_rounds,
                 duration_minutes, timezone, original_start_time,
                 original_end_time, selected_slot_json,
                 creator_delivery_binding_json, payload_json,
                 last_agent_error, failure_reason, created_at, updated_at,
-                completed_at, kanban_task_id, expires_at_utc, finalize_status,
+                completed_at, kanban_task_id,
+                NULL AS followup_cron_job_id,
+                COALESCE(followup_cron_status, 'not_created'),
+                followup_cron_last_tick_at, COALESCE(followup_cron_failure_count, 0),
+                next_followup_at,
+                expires_at_utc, finalize_status,
                 finalize_attempt_id, trigger_attendee_user_ids_json
             FROM meeting_time_negotiations;
             DROP TABLE meeting_time_negotiations;
@@ -1267,6 +1385,43 @@ class MeetingCoordinatorStore:
         ).fetchone()
         return dict(row)
 
+    def record_negotiation_event(
+        self,
+        *,
+        negotiation_id: str,
+        event_type: str,
+        actor_type: str,
+        actor_id: str,
+        payload: dict[str, Any],
+        prior_state: str | None = None,
+        next_state: str | None = None,
+        prior_state_version: int | None = None,
+        next_state_version: int | None = None,
+        kanban_task_id: str | None = None,
+        kanban_run_id: int | None = None,
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(negotiation_id)
+            return self._record_negotiation_event(
+                conn,
+                negotiation_id=negotiation_id,
+                event_type=event_type,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                payload=payload,
+                prior_state=prior_state,
+                next_state=next_state,
+                prior_state_version=prior_state_version,
+                next_state_version=next_state_version,
+                kanban_task_id=kanban_task_id,
+                kanban_run_id=kanban_run_id,
+            )
+
     def _negotiation_expiry(self, *, created_at: str, original_start_time: str) -> str:
         created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         try:
@@ -1338,8 +1493,246 @@ class MeetingCoordinatorStore:
                 actor_id=actor_id,
                 kanban_task_id=kanban_task_id,
                 payload={"kanban_task_id": kanban_task_id},
+        )
+        return dict(row)
+
+    def record_negotiation_followup_attempt(
+        self,
+        negotiation_id: str,
+        *,
+        attendee_user_id: str,
+        status: str,
+        error_detail: str | None = None,
+    ) -> dict[str, Any]:
+        if status not in {"sent", "failed"}:
+            raise ValueError("invalid followup status")
+        now = utc_now_iso()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? AND attendee_user_id=?",
+                (negotiation_id, attendee_user_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"{negotiation_id}:{attendee_user_id}")
+            if status == "sent":
+                conn.execute(
+                    """
+                    UPDATE meeting_time_negotiation_participants
+                    SET followup_count=followup_count + 1,
+                        last_followup_at=?,
+                        updated_at=?
+                    WHERE negotiation_id=? AND attendee_user_id=?
+                    """,
+                    (now, now, negotiation_id, attendee_user_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE meeting_time_negotiation_participants
+                    SET updated_at=?
+                    WHERE negotiation_id=? AND attendee_user_id=?
+                    """,
+                    (now, negotiation_id, attendee_user_id),
+                )
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? AND attendee_user_id=?",
+                (negotiation_id, attendee_user_id),
+            ).fetchone()
+        return dict(row)
+
+    def set_negotiation_followup_cron_metadata(
+        self,
+        negotiation_id: str,
+        *,
+        followup_cron_job_id: str | None = _UNSET,
+        followup_cron_status: str | None = _UNSET,
+        followup_cron_last_tick_at: Any = _UNSET,
+        followup_cron_failure_count: int | None = _UNSET,
+        next_followup_at: str | None = _UNSET,
+    ) -> dict[str, Any]:
+        if (
+            followup_cron_status is not _UNSET
+            and followup_cron_status not in FOLLOWUP_CRON_STATUSES
+        ):
+            raise ValueError("invalid followup_cron_status")
+        if (
+            followup_cron_failure_count is not _UNSET
+            and not isinstance(followup_cron_failure_count, int)
+        ):
+            raise ValueError("followup_cron_failure_count must be an integer")
+        if (
+            followup_cron_last_tick_at is not _UNSET
+            and followup_cron_last_tick_at is not None
+            and not isinstance(followup_cron_last_tick_at, str)
+        ):
+            raise ValueError("followup_cron_last_tick_at must be a string ISO8601 timestamp")
+        if (
+            next_followup_at is not _UNSET
+            and next_followup_at is not None
+            and not isinstance(next_followup_at, str)
+        ):
+            raise ValueError("next_followup_at must be a string ISO8601 timestamp")
+
+        assignments: list[str] = []
+        values: list[Any] = []
+        if followup_cron_job_id is not _UNSET:
+            assignments.append("followup_cron_job_id=?")
+            values.append(followup_cron_job_id)
+        if followup_cron_status is not _UNSET:
+            assignments.append("followup_cron_status=?")
+            values.append(followup_cron_status)
+        if followup_cron_last_tick_at is not _UNSET:
+            assignments.append("followup_cron_last_tick_at=?")
+            values.append(
+                followup_cron_last_tick_at
+                if followup_cron_last_tick_at is not None
+                else None
+            )
+        if followup_cron_failure_count is not _UNSET:
+            assignments.append("followup_cron_failure_count=?")
+            values.append(followup_cron_failure_count)
+        if next_followup_at is not _UNSET:
+            assignments.append("next_followup_at=?")
+            values.append(
+                next_followup_at
+                if next_followup_at is not None
+                else None
+            )
+        if not assignments:
+            raise ValueError("no followup cron fields provided")
+        assignments.append("updated_at=?")
+        values.append(utc_now_iso())
+        values.append(negotiation_id)
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(negotiation_id)
+            set_clause = ", ".join(assignments)
+            conn.execute(
+                f"""
+                UPDATE meeting_time_negotiations
+                SET {set_clause}
+                WHERE negotiation_id=?
+                """,
+                values,
+            )
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+            self._record_negotiation_event(
+                conn,
+                negotiation_id=negotiation_id,
+                event_type="FOLLOWUP_CRON_METADATA_SET",
+                actor_type="system",
+                actor_id="meeting-rsvp-monitor",
+                payload={"negotiation_id": negotiation_id},
             )
         return dict(row)
+
+    def bump_followup_cron_failure(
+        self,
+        negotiation_id: str,
+        *,
+        terminal: bool = False,
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(negotiation_id)
+            failure_count = int(row["followup_cron_failure_count"] or 0) + 1
+            status = "failed" if failure_count > 0 else "active"
+            if terminal:
+                status = "disabled"
+            conn.execute(
+                """
+                UPDATE meeting_time_negotiations
+                SET followup_cron_failure_count=?, followup_cron_status=?, updated_at=?
+                WHERE negotiation_id=?
+                """,
+                (failure_count, status, now, negotiation_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+        return dict(row)
+
+    def acquire_negotiation_case_lock(
+        self,
+        negotiation_id: str,
+        *,
+        owner: str,
+        lease_ttl_seconds: int = NEGOTIATION_CASE_LOCK_TTL_SECONDS,
+    ) -> bool:
+        if not owner.strip():
+            raise ValueError("owner is required")
+        if lease_ttl_seconds <= 0:
+            raise ValueError("lease_ttl_seconds must be positive")
+        owner = owner.strip()
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat().replace("+00:00", "Z")
+        expires_at = (now + timedelta(seconds=lease_ttl_seconds)).isoformat().replace(
+            "+00:00", "Z"
+        )
+        with self._connect() as conn:
+            # Ensure negotiation exists before writing a lock row.
+            existing = conn.execute(
+                "SELECT 1 FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+            if existing is None:
+                raise KeyError(negotiation_id)
+            row = conn.execute(
+                "SELECT * FROM meeting_time_negotiation_case_locks WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO meeting_time_negotiation_case_locks(
+                        negotiation_id, owner, lease_expires_at, acquired_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (negotiation_id, owner, expires_at, now_iso, now_iso),
+                )
+                return True
+            prior_owner = str(row["owner"] or "")
+            prior_expiry = _parse_utc_iso(str(row["lease_expires_at"] or ""))
+            if prior_expiry is None or prior_expiry <= now or prior_owner == owner:
+                conn.execute(
+                    """
+                    UPDATE meeting_time_negotiation_case_locks
+                    SET owner=?,
+                        lease_expires_at=?,
+                        acquired_at=?,
+                        updated_at=?
+                    WHERE negotiation_id=?
+                    """,
+                    (owner, expires_at, now_iso, now_iso, negotiation_id),
+                )
+                return True
+            return False
+
+    def release_negotiation_case_lock(self, negotiation_id: str, *, owner: str) -> bool:
+        if not owner.strip():
+            return False
+        owner = owner.strip()
+        with self._connect() as conn:
+            row = conn.execute(
+                "DELETE FROM meeting_time_negotiation_case_locks "
+                "WHERE negotiation_id=? AND owner=?",
+                (negotiation_id, owner),
+            )
+        return bool(row.rowcount and row.rowcount > 0)
 
     def list_negotiations_for_monitor(self, monitor_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -1496,6 +1889,48 @@ class MeetingCoordinatorStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def set_negotiation_participant_rsvp_status(
+        self,
+        *,
+        negotiation_id: str,
+        attendee_user_id: str,
+        response_status: str,
+        responded: bool = True,
+    ) -> dict[str, Any]:
+        normalized = str(response_status or "").strip().lower()
+        if normalized not in {
+            "unknown",
+            "asked",
+            "accepted_slot",
+            "declined_slot",
+            "proposed_slot",
+            "abstained",
+        }:
+            raise ValueError("invalid negotiation response status")
+        now = utc_now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE meeting_time_negotiation_participants
+                SET latest_response_status=?,
+                    last_response_at=COALESCE(?, last_response_at),
+                    responded_at=COALESCE(?, last_response_at),
+                    updated_at=?
+                WHERE negotiation_id=? AND attendee_user_id=?
+                """,
+                (normalized, now if responded else None, now if responded else None, now, negotiation_id, attendee_user_id),
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM meeting_time_negotiation_participants
+                WHERE negotiation_id=? AND attendee_user_id=?
+                """,
+                (negotiation_id, attendee_user_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"{negotiation_id}:{attendee_user_id}")
+        return dict(row)
+
     def list_new_declined_attendees_requiring_negotiation(
         self,
         monitor_id: str,
@@ -1519,6 +1954,7 @@ class MeetingCoordinatorStore:
         monitor_id: str,
         event_revision_id: str,
         trigger_attendee_user_id: str,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         now = utc_now_iso()
         with self._connect() as conn:
@@ -1530,6 +1966,9 @@ class MeetingCoordinatorStore:
                 raise KeyError(monitor_id)
             monitor = dict(monitor_row)
             payload = json.loads(str(monitor.get("payload_json") or "{}"))
+            resolved_session_id = str(
+                session_id or payload.get("session_id") or ""
+            ).strip()
             negotiation_id = _negotiation_id(
                 monitor["workspace_id"],
                 monitor["event_id"],
@@ -1559,6 +1998,7 @@ class MeetingCoordinatorStore:
                     INSERT INTO meeting_time_negotiations(
                         negotiation_id, monitor_id, workspace_id, event_id,
                         event_revision_id, calendar_id, creator_user_id,
+                        session_id,
                         declined_attendee_user_id, status, current_round, max_rounds,
                         duration_minutes, timezone, original_start_time,
                         original_end_time, selected_slot_json,
@@ -1581,6 +2021,7 @@ class MeetingCoordinatorStore:
                         event_revision_id,
                         monitor["calendar_id"],
                         monitor["creator_user_id"],
+                        resolved_session_id,
                         trigger_attendee_user_id,
                         self._duration_minutes(payload),
                         str(payload.get("timezone") or "UTC"),
@@ -1611,6 +2052,15 @@ class MeetingCoordinatorStore:
                 )
             else:
                 negotiation_id = existing_row["negotiation_id"]
+                if resolved_session_id and not existing_row["session_id"]:
+                    conn.execute(
+                        """
+                        UPDATE meeting_time_negotiations
+                        SET session_id=?
+                        WHERE negotiation_id=?
+                        """,
+                        (resolved_session_id, negotiation_id),
+                    )
 
             row = conn.execute(
                 "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
@@ -2315,13 +2765,13 @@ class MeetingCoordinatorStore:
         requested_by_user_id: str,
     ) -> dict[str, Any]:
         negotiation = self.get_negotiation(negotiation_id)
-        slot = self.get_candidate_slot(selected_slot_id)
-        if slot["negotiation_id"] != negotiation_id:
-            raise ValueError("selected slot does not belong to negotiation")
         if decision_source == "requester_final_decision":
             if requested_by_user_id != negotiation["creator_user_id"]:
                 raise ValueError("requester_final_decision requires requester identity")
             return {"ok": True, "decision_source": decision_source}
+        slot = self.get_candidate_slot(selected_slot_id)
+        if slot["negotiation_id"] != negotiation_id:
+            raise ValueError("selected slot does not belong to negotiation")
         if decision_source != "consent":
             raise ValueError("invalid decision_source")
         participants = self.list_negotiation_participants(negotiation_id)
@@ -2373,19 +2823,55 @@ class MeetingCoordinatorStore:
         calendar_update_payload: dict[str, Any],
     ) -> dict[str, Any]:
         now = utc_now_iso()
+        selected_slot = None
+        slot_start_time = ""
+        slot_end_time = ""
+        slot_timezone = ""
         with self._connect() as conn:
             negotiation = conn.execute(
                 "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
                 (negotiation_id,),
             ).fetchone()
-            slot = conn.execute(
-                "SELECT * FROM meeting_time_candidate_slots WHERE slot_id=?",
-                (selected_slot_id,),
-            ).fetchone()
-            if negotiation is None or slot is None:
-                raise KeyError(
-                    negotiation_id if negotiation is None else selected_slot_id
-                )
+            if negotiation is None:
+                raise KeyError(negotiation_id)
+            if not selected_slot_id:
+                if decision_source == "requester_final_decision":
+                    selected_slot_id = f"requester-final:{str(negotiation['negotiation_id'])}"
+                else:
+                    raise ValueError("selected_slot_id is required")
+            try:
+                row = conn.execute(
+                    "SELECT * FROM meeting_time_candidate_slots WHERE slot_id=?",
+                    (selected_slot_id,),
+                ).fetchone()
+            except Exception:
+                row = None
+            if row is not None:
+                selected_slot = dict(row)
+                if str(selected_slot.get("negotiation_id") or "") != negotiation_id:
+                    raise ValueError("selected slot does not belong to negotiation")
+                slot_start_time = str(selected_slot.get("start_time") or "")
+                slot_end_time = str(selected_slot.get("end_time") or "")
+                slot_timezone = str(selected_slot.get("timezone") or "")
+            elif decision_source == "requester_final_decision":
+                payload = negotiation.get("selected_slot_json") or "{}"
+                try:
+                    selected_slot_payload = json.loads(str(payload))
+                except json.JSONDecodeError:
+                    selected_slot_payload = {}
+                if not isinstance(selected_slot_payload, dict):
+                    selected_slot_payload = {}
+                slot_start_time = str(selected_slot_payload.get("start_time") or "")
+                slot_end_time = str(selected_slot_payload.get("end_time") or "")
+                slot_timezone = str(selected_slot_payload.get("timezone") or "")
+                if not slot_start_time or not slot_end_time:
+                    slot_start_time = str(negotiation.get("original_start_time") or "")
+                    slot_end_time = str(negotiation.get("original_end_time") or "")
+                    slot_timezone = str(negotiation.get("timezone") or "UTC")
+                if not slot_start_time or not slot_end_time or not slot_timezone:
+                    raise ValueError("cannot derive original slot for requester final decision")
+            else:
+                raise KeyError(selected_slot_id)
             key = hashlib.sha256(
                 _canonical_json_array(
                     [
@@ -2394,8 +2880,8 @@ class MeetingCoordinatorStore:
                         negotiation["event_revision_id"],
                         selected_slot_id,
                         decision_source,
-                        slot["start_time"],
-                        slot["end_time"],
+                        slot_start_time,
+                        slot_end_time,
                     ]
                 ).encode("utf-8")
             ).hexdigest()

@@ -38,4 +38,7 @@ ui_extensions:
       - id: cancel
         label: Cancel
         plugin_api: POST /plugins/meeting-coordinator/negotiations/{negotiation_id}/cancel
+      - id: requester_decision
+        label: Requester decision
+        plugin_api: POST /plugins/meeting-coordinator/negotiations/{negotiation_id}/requester-decision
     host_version_requirement: ">=0.2.0"

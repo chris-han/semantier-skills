@@ -9,6 +9,7 @@ def negotiation_task_body(
     *,
     negotiation: dict[str, Any],
     session_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     payload = {}
     try:
@@ -17,8 +18,9 @@ def negotiation_task_body(
             payload = loaded
     except json.JSONDecodeError:
         payload = {}
-    body = {
-        "metadata": {
+
+    if metadata is None:
+        metadata = {
             "task_type": "feishu_meeting_negotiation",
             "negotiation_id": str(negotiation["negotiation_id"]),
             "workspace_id": str(negotiation["workspace_id"]),
@@ -31,7 +33,47 @@ def negotiation_task_body(
                 or payload.get("title")
                 or negotiation["event_id"]
             ),
-        },
+            "followup_cron_job_id": str(
+                negotiation.get("followup_cron_job_id") or ""
+            ),
+            "followup_cron_last_tick_at": str(negotiation.get("followup_cron_last_tick_at") or ""),
+            "next_followup_at": str(negotiation.get("next_followup_at") or ""),
+        }
+
+    normalized_metadata = dict(metadata)
+    normalized_metadata.setdefault(
+        "task_type",
+        "feishu_meeting_negotiation",
+    )
+    normalized_metadata.setdefault("negotiation_id", str(negotiation["negotiation_id"]))
+    normalized_metadata.setdefault("workspace_id", str(negotiation["workspace_id"]))
+    normalized_metadata.setdefault(
+        "session_id",
+        str(session_id or normalized_metadata.get("session_id") or payload.get("session_id") or ""),
+    )
+    normalized_metadata.setdefault("event_id", str(negotiation["event_id"]))
+    normalized_metadata.setdefault(
+        "event_revision_id", str(negotiation["event_revision_id"])
+    )
+    normalized_metadata.setdefault("status", str(negotiation["status"]))
+    normalized_metadata.setdefault(
+        "meeting_title",
+        str(payload.get("meeting_title") or payload.get("title") or negotiation["event_id"]),
+    )
+    normalized_metadata.setdefault(
+        "followup_cron_job_id",
+        str(negotiation.get("followup_cron_job_id") or ""),
+    )
+    normalized_metadata.setdefault(
+        "followup_cron_last_tick_at",
+        str(negotiation.get("followup_cron_last_tick_at") or ""),
+    )
+    normalized_metadata.setdefault(
+        "next_followup_at",
+        str(negotiation.get("next_followup_at") or ""),
+    )
+    body = {
+        "metadata": normalized_metadata,
         "payload": {
             "calendar_id": str(negotiation["calendar_id"]),
             "creator_user_id": str(negotiation["creator_user_id"]),
@@ -115,3 +157,11 @@ class HermesKanbanClient:
                 reason="feishu meeting monitor cleanup",
             )
             return bool(kanban_db.delete_task(conn, task_id))
+
+    def update_task_body(self, task_id: str, *, body: str) -> bool:
+        with self._connection() as (kanban_db, conn):
+            cur = conn.execute(
+                "UPDATE tasks SET body = ? WHERE id = ?",
+                (body, task_id),
+            )
+            return bool(cur.rowcount)

@@ -85,6 +85,7 @@ class MeetingCoordinatorWebApiCronClient:
         """
         monitor_prefix = "meeting-rsvp-monitor:"
         delivery_prefix = "meeting-rsvp-delivery-retry:"
+        followup_prefix = "meeting-time-negotiator-followup:"
         if name.startswith(monitor_prefix):
             monitor_id = name[len(monitor_prefix):].strip()
             if not monitor_id:
@@ -99,6 +100,15 @@ class MeetingCoordinatorWebApiCronClient:
             invocation = f"""
                 result_text = plugin_tools.feishu_meeting_escalation_retry_tick(
                     {{"workspace_id": {workspace_id!r}}}
+                )
+            """
+        elif name.startswith(followup_prefix):
+            negotiation_id = name[len(followup_prefix):].strip()
+            if not negotiation_id:
+                raise RuntimeError("missing negotiation id for no-agent meeting coordinator follow-up job")
+            invocation = f"""
+                result_text = plugin_tools.feishu_meeting_followup_cron_tick(
+                    {{"negotiation_id": {negotiation_id!r}}}
                 )
             """
         else:

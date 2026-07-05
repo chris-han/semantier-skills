@@ -56,6 +56,12 @@ def test_plugin_store_schema_enforces_fk_and_kanban_columns(store: MeetingCoordi
                 "PRAGMA table_info(meeting_time_negotiations)"
             ).fetchall()
         }
+        participant_columns = {
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA table_info(meeting_time_negotiation_participants)"
+            ).fetchall()
+        }
         message_columns = {
             row["name"]
             for row in conn.execute(
@@ -82,7 +88,24 @@ def test_plugin_store_schema_enforces_fk_and_kanban_columns(store: MeetingCoordi
                 """
             )
 
-    assert "kanban_task_id" in negotiation_columns
+    assert {"session_id", "kanban_task_id", "followup_cron_job_id"}.issubset(
+        negotiation_columns
+    )
+    assert {"followup_cron_status", "followup_cron_last_tick_at"}.issubset(
+        negotiation_columns
+    )
+    assert {"followup_cron_failure_count", "next_followup_at"}.issubset(
+        negotiation_columns
+    )
+    assert {"followup_count", "last_followup_at"}.issubset(participant_columns)
+    lock_exists = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type='table' AND name='meeting_time_negotiation_case_locks'
+        """
+    ).fetchone()
+    assert lock_exists is not None
     assert "kanban_comment_id" in message_columns
     assert {"kanban_task_id", "kanban_run_id"}.issubset(event_columns)
 
@@ -101,6 +124,7 @@ def test_plugin_store_creates_merged_negotiation_case(store: MeetingCoordinatorS
         monitor_id=monitor["monitor_id"],
         event_revision_id=monitor["event_revision_id"],
         trigger_attendee_user_id="ou_a",
+        session_id="sess_1",
     )
     second = store.create_or_get_negotiation_case(
         monitor_id=monitor["monitor_id"],
@@ -119,3 +143,23 @@ def test_plugin_store_creates_merged_negotiation_case(store: MeetingCoordinatorS
         for item in participants
         if item["role"] == "requester"
     ] == [0]
+    assert first["session_id"] == "sess_1"
+    assert store.get_negotiation(first["negotiation_id"])["session_id"] == "sess_1"
+    with pytest.raises(KeyError):
+        store.set_negotiation_followup_cron_metadata(
+            "non-existent",
+            followup_cron_job_id="job_missing",
+        )
+    updated = store.set_negotiation_followup_cron_metadata(
+        first["negotiation_id"],
+        followup_cron_job_id="job_1",
+        followup_cron_status="active",
+        followup_cron_failure_count=1,
+        followup_cron_last_tick_at="2026-06-15T10:00:00Z",
+        next_followup_at="2026-06-15T10:02:00Z",
+    )
+    assert updated["followup_cron_job_id"] == "job_1"
+    assert updated["followup_cron_status"] == "active"
+    assert updated["followup_cron_failure_count"] == 1
+    assert updated["followup_cron_last_tick_at"] == "2026-06-15T10:00:00Z"
+    assert updated["next_followup_at"] == "2026-06-15T10:02:00Z"

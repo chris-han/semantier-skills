@@ -30,6 +30,10 @@ ROUTE_POLICY_MAP = {
     ("POST", "/system/meeting-coordinator/negotiations/{negotiation_id}/reply"): "authenticated",
     ("POST", "/system/meeting-coordinator/negotiations/{negotiation_id}/finalize"): "authenticated",
     ("POST", "/system/meeting-coordinator/negotiations/{negotiation_id}/cancel"): "authenticated",
+    (
+        "POST",
+        "/plugins/meeting-coordinator/negotiations/{negotiation_id}/requester-decision",
+    ): "authenticated",
     ("GET", "/system/meeting-coordinator/settings"): "authenticated",
     ("PUT", "/system/meeting-coordinator/settings"): "authenticated",
     ("POST", "/system/meeting-coordinator/delivery-tasks/retry"): "authenticated",
@@ -478,6 +482,54 @@ async def system_meeting_coordinator_negotiation_cancel(
         summary="Operator cancelled the meeting time negotiation.",
     )
     return {"ok": True, "negotiation": result["record"]}
+
+
+@router.post(
+    "/plugins/meeting-coordinator/negotiations/{negotiation_id}/requester-decision"
+)
+async def plugins_meeting_coordinator_negotiation_requester_decision(
+    negotiation_id: str,
+    request: Request,
+):
+    ctx = request_context_from_request(request)
+    if not ctx.authenticated:
+        raise HTTPException(status_code=401, detail="authentication required")
+    body = await request.json()
+    action = str(body.get("action") or "").strip()
+    if not action:
+        raise HTTPException(status_code=400, detail="action is required")
+    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    try:
+        negotiation_record = store.get_negotiation_for_workspace(
+            negotiation_id,
+            workspace_id=ctx.workspace_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="not_found_or_wrong_workspace"
+        ) from exc
+    _require_negotiation_operator(negotiation_record, user_id=ctx.user_id)
+    if action == "requester_select_slot" and not (
+        str(body.get("slot_id") or body.get("selected_slot_id") or "").strip()
+    ):
+        raise HTTPException(
+            status_code=400, detail="selected_slot_id is required for requester_select_slot"
+        )
+    try:
+        result = meeting_coordinator_gateway.apply_requester_decision(
+            {
+                **body,
+                "negotiation_id": negotiation_id,
+                "requested_by_user_id": str(ctx.user_id or ""),
+            },
+            store=store,
+            cron=MeetingCoordinatorWebApiCronClient(ctx),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"ok": True, "result": result}
 
 
 @router.get("/system/meeting-coordinator/settings")
