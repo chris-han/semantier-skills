@@ -32,9 +32,13 @@ export default function NegotiationCard({
   const title = text(metadata.meeting_title, "Meeting negotiation");
   const status = text(metadata.status, "pending");
   const followupStatus = text(metadata.followup_cron_status, "not_created");
+  const followupCronJobId = text(metadata.followup_cron_job_id);
   const nextFollowupAt = text(metadata.next_followup_at, "not scheduled");
   const lastTickAt = text(metadata.followup_cron_last_tick_at, "never");
   const failureCount = safeCount(metadata.followup_cron_failure_count, 0);
+  const terminalAuthority = text(metadata.terminal_authority);
+  const terminalAt = text(metadata.terminal_at);
+  const terminalReason = text(metadata.terminal_reason);
   const declinedAttendee = text(metadata.declined_attendee_name, "Declined attendee");
   const missingAttendees = asStringArray(metadata.missing_required_attendee_names);
   const bestSlot = text(metadata.best_slot, "No candidate slot");
@@ -51,10 +55,14 @@ export default function NegotiationCard({
         <span>{status}</span>
       </div>
       <div>Declined attendee: {declinedAttendee}</div>
+      <div>Follow-up cron job: {followupCronJobId || "not assigned"}</div>
       <div>Cron: {followupStatus}</div>
       <div>Next follow-up: {nextFollowupAt}</div>
       <div>Last tick: {lastTickAt}</div>
       <div>Cron failures: {failureCount}</div>
+      <div>Terminal authority: {terminalAuthority || "n/a"}</div>
+      <div>Terminal at: {terminalAt || "n/a"}</div>
+      <div>Terminal reason: {terminalReason || "n/a"}</div>
       <div>Best slot: {bestSlot}</div>
       <div>
         Missing required attendees:{" "}

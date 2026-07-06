@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import hashlib
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from .store import MeetingCoordinatorStore
+from .store import NEGOTIATION_CASE_LOCK_TTL_SECONDS, MeetingCoordinatorStore
 
 _PROMPTS_ROOT = Path(__file__).resolve().parent / "prompts"
 
@@ -84,6 +84,50 @@ class KanbanClient(Protocol):
     def update_task_body(self, task_id: str, *, body: str) -> bool: ...
 
     def delete(self, task_id: str) -> bool: ...
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_temporal_window_payload(payload: dict[str, Any]) -> None:
+    from agents.temporal_resolution import (
+        normalize_calendar_instant,
+        normalize_calendar_window,
+        parse_local_datetime,
+    )
+
+    timezone_name = str(payload.get("timezone") or "Asia/Shanghai")
+    if (
+        not str(payload.get("end_time") or "").strip()
+        and payload.get("duration_minutes") is not None
+    ):
+        try:
+            duration_minutes = int(payload.get("duration_minutes"))
+        except (TypeError, ValueError):
+            raise ValueError("duration_minutes must be an integer") from None
+        if duration_minutes <= 0:
+            raise ValueError("duration_minutes must be greater than zero")
+        start_dt = parse_local_datetime(
+            normalize_calendar_instant(
+                value=str(payload.get("start_time") or ""),
+                timezone_name=timezone_name,
+                allow_past=bool(payload.get("allow_past")),
+            ),
+            timezone_name,
+        )
+        payload["end_time"] = (
+            start_dt + timedelta(minutes=duration_minutes)
+        ).isoformat()
+    window = normalize_calendar_window(
+        start_time=str(payload.get("start_time") or ""),
+        end_time=str(payload.get("end_time") or ""),
+        timezone_name=timezone_name,
+        allow_past=bool(payload.get("allow_past")),
+    )
+    payload["start_time"] = window.start_time
+    payload["end_time"] = window.end_time
+    payload["timezone"] = window.timezone
 
 
 def _prompt(name: str, **values: str) -> str:
@@ -188,36 +232,8 @@ def start_monitor(
     store: MeetingCoordinatorStore,
     cron: CronClient,
 ) -> dict[str, Any]:
-    monitor = store.start_monitor(payload)
-    cron_id = str(monitor.get("cron_job_id") or "")
-    if cron_id and cron.job_exists(cron_id):
-        return monitor
-    try:
-        name = f"meeting-rsvp-monitor:{monitor['monitor_id']}"
-        prompt = _prompt(
-            "RSVP_MONITOR_JOB.md",
-            monitor_id=monitor["monitor_id"],
-            workspace_id=monitor["workspace_id"],
-            event_id=monitor["event_id"],
-            calendar_id=monitor["calendar_id"],
-        )
-        new_cron_id = cron.ensure_job(
-            name=name,
-            schedule="every 2m",
-            profile="meeting-coordinator",
-            prompt=prompt,
-            skills=["feishu_meeting_coordinator"],
-            deliver="local",
-            repeat=0,
-            no_agent=True,
-            script=f"meeting-rsvp-monitor-{monitor['monitor_id']}.py",
-        )
-    except Exception as exc:
-        detail = str(exc)
-        if payload.get("scheduler_failure_terminal") is True:
-            return store.mark_monitor_failed(monitor["monitor_id"], detail=detail)
-        return store.mark_monitor_start_failed(monitor["monitor_id"], detail=detail)
-    return store.attach_cron_job(monitor["monitor_id"], new_cron_id)
+    _ = cron
+    raise RuntimeError("legacy RSVP monitor cron lifecycle is retired in v3")
 
 
 def ensure_delivery_retry_cron(*, workspace_id: str, cron: CronClient) -> str:
@@ -530,6 +546,29 @@ def _followup_cron_job_exists(
         except Exception:
             return False
     return True
+
+
+def _followup_cron_owner_context(
+    *,
+    negotiation_id: str,
+    workspace_id: str,
+    owner_profile: str | None = None,
+    owner_idempotency_key: str | None = None,
+) -> tuple[str, str]:
+    owner_workspace = str(
+        os.environ.get("HERMES_SESSION_WORKSPACE_OWNER_ID")
+        or os.environ.get("SEMANTIER_WORKSPACE_ID")
+        or workspace_id
+    ).strip()
+    resolved_owner_profile = str(
+        owner_profile or f"followup_cron:{owner_workspace}:{str(negotiation_id).strip()}"
+    ).strip()
+    if not resolved_owner_profile:
+        resolved_owner_profile = f"followup_cron:{workspace_id}:{str(negotiation_id).strip()}"
+    resolved_idempotency_key = str(owner_idempotency_key or owner_workspace).strip()
+    if not resolved_idempotency_key:
+        resolved_idempotency_key = "default"
+    return resolved_owner_profile, resolved_idempotency_key
 
 
 def _schedule_interval_minutes(schedule: Any) -> int | None:
@@ -1006,8 +1045,13 @@ def _stop_followup_cron_if_terminal(
     negotiation_id: str,
     store: MeetingCoordinatorStore,
     cron: CronClient | None,
+    owner_profile: str | None = None,
+    owner_idempotency_key: str | None = None,
     kanban: KanbanClient | None = None,
     reason: str,
+    terminal_authority: str | None = None,
+    terminal_reason: str | None = None,
+    terminal_event_revision_id: str | None = None,
 ) -> dict[str, Any]:
     negotiation = store.get_negotiation(negotiation_id)
     if not _negotiation_is_terminal(negotiation):
@@ -1019,7 +1063,12 @@ def _stop_followup_cron_if_terminal(
         store=store,
         cron=cron,
         kanban=kanban,
+        owner_profile=owner_profile,
+        owner_idempotency_key=owner_idempotency_key,
         reason=reason,
+        terminal_authority=terminal_authority,
+        terminal_reason=terminal_reason,
+        terminal_event_revision_id=terminal_event_revision_id,
     )
 
 
@@ -1072,7 +1121,11 @@ def _apply_requester_decision(
             store=store,
             cron=cron,
             kanban=kanban,
+            owner_profile=owner,
             reason="requester_cancel",
+            terminal_authority=owner,
+            terminal_reason="requester_cancel",
+            terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
         )
         return {
             "requester_decision": action,
@@ -1129,7 +1182,11 @@ def _apply_requester_decision(
             store=store,
             cron=cron,
             kanban=kanban,
+            owner_profile=owner,
             reason="requester_keep_original",
+            terminal_authority=owner,
+            terminal_reason="requester_keep_original",
+            terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
         )
         return {
             "requester_decision": action,
@@ -1190,7 +1247,11 @@ def _apply_requester_decision(
             store=store,
             cron=cron,
             kanban=kanban,
+            owner_profile=owner,
             reason="requester_select_slot",
+            terminal_authority=owner,
+            terminal_reason="requester_select_slot",
+            terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
         )
         return {
             "requester_decision": action,
@@ -1212,8 +1273,18 @@ def ensure_negotiation_followup_cron(
     cron: CronClient | None,
     schedule: str = "every 2m",
     kanban: KanbanClient | None = None,
+    owner_profile: str | None = None,
+    owner_idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     negotiation = store.get_negotiation(negotiation_id)
+    workspace_id = str(negotiation["workspace_id"])
+    followup_owner_profile, followup_owner_idempotency_key = _followup_cron_owner_context(
+        negotiation_id=negotiation_id,
+        workspace_id=workspace_id,
+        owner_profile=owner_profile,
+        owner_idempotency_key=owner_idempotency_key,
+    )
+    cron_name = _followup_cron_name(negotiation_id)
     if _negotiation_is_terminal(negotiation):
         if cron is None:
             negotiation = store.set_negotiation_followup_cron_metadata(
@@ -1233,12 +1304,13 @@ def ensure_negotiation_followup_cron(
             store=store,
             cron=cron,
             kanban=kanban,
+            owner_profile=followup_owner_profile,
+            owner_idempotency_key=followup_owner_idempotency_key,
             reason="terminal_negotiation",
         )
     session_id = str(negotiation.get("session_id") or "").strip()
     if not session_id:
         raise RuntimeError("negotiation_session_id_required")
-    name = _followup_cron_name(negotiation_id)
     if cron is None:
         negotiation = store.set_negotiation_followup_cron_metadata(
             negotiation_id,
@@ -1252,23 +1324,53 @@ def ensure_negotiation_followup_cron(
             kanban=kanban,
         )
         return negotiation
+    try:
+        store.ensure_followup_cron_ownership(
+            negotiation_id=negotiation_id,
+            cron_name=cron_name,
+            owner_profile=followup_owner_profile,
+            owner_idempotency_key=followup_owner_idempotency_key,
+            workspace_id=workspace_id,
+            cron_job_id=None,
+            ttl_seconds=NEGOTIATION_CASE_LOCK_TTL_SECONDS * 2,
+        )
+    except RuntimeError as exc:
+        if str(exc) == "followup cron ownership conflict":
+            return store.set_negotiation_followup_cron_metadata(
+                negotiation_id,
+                followup_cron_status="repair_required",
+            )
+        raise
     prompt = _prompt(
         "NEGOTIATION_FOLLOWUP_TICK.md",
         negotiation_id=negotiation_id,
         workspace_id=str(negotiation["workspace_id"]),
         session_id=session_id,
     )
-    cron_job_id = cron.ensure_job(
-        name=name,
-        schedule=schedule,
-        profile="meeting-coordinator",
-        prompt=prompt,
-        skills=["feishu_meeting_coordinator"],
-        deliver="local",
-        repeat=0,
-        no_agent=True,
-        script=f"{_FOLLOWUP_CRON_SCRIPT_PREFIX}{negotiation_id}.py",
-    )
+    try:
+        cron_job_id = cron.ensure_job(
+            name=cron_name,
+            schedule=schedule,
+            profile="meeting-coordinator",
+            prompt=prompt,
+            skills=["feishu_meeting_coordinator"],
+            deliver="local",
+            repeat=0,
+            no_agent=False,
+            script=None,
+        )
+    except Exception:
+        try:
+            store.release_followup_cron_ownership(
+                negotiation_id=negotiation_id,
+                cron_name=cron_name,
+                owner_profile=followup_owner_profile,
+                owner_idempotency_key=followup_owner_idempotency_key,
+                workspace_id=workspace_id,
+            )
+        except Exception:
+            pass
+        raise
 
     try:
         interval_minutes = 2
@@ -1283,6 +1385,34 @@ def ensure_negotiation_followup_cron(
         ).isoformat().replace("+00:00", "Z")
     except Exception:
         next_followup_at = None
+
+    try:
+        store.ensure_followup_cron_ownership(
+            negotiation_id=negotiation_id,
+            cron_name=cron_name,
+            owner_profile=followup_owner_profile,
+            owner_idempotency_key=followup_owner_idempotency_key,
+            workspace_id=workspace_id,
+            cron_job_id=cron_job_id,
+            ttl_seconds=NEGOTIATION_CASE_LOCK_TTL_SECONDS * 2,
+        )
+    except RuntimeError as exc:
+        if str(exc) != "followup cron ownership conflict":
+            raise
+        _record_negotiation_event_safely(
+            store=store,
+            negotiation_id=negotiation_id,
+            event_type="FOLLOWUP_CRON_OWNERSHIP_LOST",
+            actor_type="system",
+            actor_id="meeting-time-negotiator",
+            payload={"cron_job_id": cron_job_id},
+        )
+        return store.set_negotiation_followup_cron_metadata(
+            negotiation_id,
+            followup_cron_status="repair_required",
+            followup_cron_job_id=cron_job_id,
+            next_followup_at=None,
+        )
 
     negotiation = store.set_negotiation_followup_cron_metadata(
         negotiation_id,
@@ -1305,8 +1435,16 @@ def stop_negotiation_followup_cron(
     cron: CronClient,
     reason: str = "operator_stop",
     kanban: KanbanClient | None = None,
+    owner_profile: str | None = None,
+    owner_idempotency_key: str | None = None,
+    expected_followup_cron_job_id: str | None = None,
+    terminal_authority: str | None = None,
+    terminal_reason: str | None = None,
+    terminal_event_revision_id: str | None = None,
 ) -> dict[str, Any]:
     negotiation = store.get_negotiation(negotiation_id)
+    workspace_id = str(negotiation["workspace_id"])
+    cron_name = _followup_cron_name(negotiation_id)
     cron_job_id = str(negotiation.get("followup_cron_job_id") or "").strip()
     if cron_job_id and cron is not None:
         try:
@@ -1317,11 +1455,41 @@ def stop_negotiation_followup_cron(
     else:
         status = "removed"
         removed = False
+    set_kwargs: dict[str, Any] = {
+        "followup_cron_job_id": None,
+        "followup_cron_status": status,
+    }
+    released = False
+    if expected_followup_cron_job_id is not None:
+        set_kwargs["expected_followup_cron_job_id"] = expected_followup_cron_job_id
+    if terminal_authority is not None:
+        set_kwargs["terminal_authority"] = terminal_authority
+    if terminal_reason is not None:
+        set_kwargs["terminal_reason"] = terminal_reason
+    if terminal_event_revision_id is not None:
+        set_kwargs["terminal_event_revision_id"] = terminal_event_revision_id
     result = store.set_negotiation_followup_cron_metadata(
         negotiation_id,
-        followup_cron_job_id=None,
-        followup_cron_status=status,
+        **set_kwargs,
     )
+    try:
+        followup_owner_profile, followup_owner_idempotency_key = (
+            _followup_cron_owner_context(
+                negotiation_id=negotiation_id,
+                workspace_id=workspace_id,
+                owner_profile=owner_profile,
+                owner_idempotency_key=owner_idempotency_key,
+            )
+        )
+        released = store.release_followup_cron_ownership(
+            negotiation_id=negotiation_id,
+            cron_name=cron_name,
+            owner_profile=followup_owner_profile,
+            owner_idempotency_key=followup_owner_idempotency_key,
+            workspace_id=workspace_id,
+        )
+    except Exception:
+        released = False
     _record_negotiation_event_safely(
         store=store,
         negotiation_id=negotiation_id,
@@ -1332,7 +1500,9 @@ def stop_negotiation_followup_cron(
             "followup_cron_job_id": cron_job_id,
             "removed": bool(removed),
             "status": status,
+            "ownership_released": bool(released),
             "reason": reason,
+            "expected_followup_cron_job_id": expected_followup_cron_job_id,
         },
         prior_state=str(negotiation.get("status") or ""),
         next_state=str(result.get("status") or negotiation.get("status") or ""),
@@ -1347,6 +1517,96 @@ def stop_negotiation_followup_cron(
         "disabled": status == "disabled",
         "reason": reason,
     }
+
+
+def negotiation_case_start(
+    payload: dict[str, Any],
+    *,
+    store: MeetingCoordinatorStore,
+    kanban: KanbanClient | None = None,
+) -> dict[str, Any]:
+    negotiation = store.create_or_get_negotiation_case(
+        monitor_id=_text(payload.get("monitor_id")),
+        event_revision_id=_text(payload.get("event_revision_id")),
+        trigger_attendee_user_id=_text(payload.get("trigger_attendee_user_id")),
+        session_id=_text(payload.get("session_id")) or None,
+    )
+    if payload.get("ensure_kanban") is not False:
+        return ensure_negotiation_kanban_task(
+            negotiation_id=str(negotiation["negotiation_id"]),
+            store=store,
+            kanban=kanban,
+        )
+    return negotiation
+
+
+def negotiation_case_stop(
+    *,
+    negotiation_id: str,
+    store: MeetingCoordinatorStore,
+    operator_user_id: str | None = None,
+) -> dict[str, Any]:
+    negotiation = store.get_negotiation(negotiation_id)
+    owner = f"operator:{operator_user_id or 'unknown'}"
+    result = store.transition_negotiation_state(
+        negotiation_id,
+        expected_state=str(negotiation["status"]),
+        next_state="cancelled",
+        patch={},
+        actor_id=owner,
+    )
+    if not result["ok"]:
+        raise RuntimeError(str(result["reason"]))
+    return result["record"]
+
+
+def negotiation_case_submit_reply(
+    payload: dict[str, Any],
+    *,
+    store: MeetingCoordinatorStore,
+    kanban: KanbanClient | None = None,
+) -> dict[str, Any]:
+    reply_payload = dict(payload)
+    if reply_payload.get("start_time") and reply_payload.get("end_time"):
+        _normalize_temporal_window_payload(reply_payload)
+    return submit_negotiation_reply(
+        reply_payload,
+        store=store,
+    )
+
+
+def negotiation_case_finalize(
+    payload: dict[str, Any],
+    *,
+    store: MeetingCoordinatorStore,
+    calendar_client: CalendarUpdateClient,
+    cron: CronClient | None = None,
+    kanban: KanbanClient | None = None,
+    lock_ttl_seconds: int = NEGOTIATION_CASE_LOCK_TTL_SECONDS,
+) -> dict[str, Any]:
+    return finalize_negotiation_case(
+        payload,
+        store=store,
+        calendar_client=calendar_client,
+        cron=cron,
+        kanban=kanban,
+        lock_ttl_seconds=lock_ttl_seconds,
+    )
+
+
+def negotiation_requester_decision(
+    payload: dict[str, Any],
+    *,
+    store: MeetingCoordinatorStore,
+    kanban: KanbanClient | None = None,
+    cron: CronClient | None = None,
+) -> dict[str, Any]:
+    return apply_requester_decision(
+        payload,
+        store=store,
+        kanban=kanban,
+        cron=cron,
+    )
 
 
 def negotiation_followup_cron_tick(
@@ -1451,7 +1711,11 @@ def negotiation_followup_cron_tick(
                     store=store,
                     cron=cron,
                     kanban=kanban,
+                    owner_profile=owner,
                     reason="terminal_state",
+                    terminal_authority=owner,
+                    terminal_reason="terminal_state",
+                    terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
                 )
             _sync_negotiation_kanban_task_body(
                 negotiation_id=negotiation_id,
@@ -1474,11 +1738,51 @@ def negotiation_followup_cron_tick(
 
         cron_stale = False
         cron_job_id = str(negotiation.get("followup_cron_job_id") or "").strip()
-        if cron is not None and cron_job_id:
-            try:
-                cron_stale = not _followup_cron_job_exists(cron=cron, job_id=cron_job_id)
-            except Exception:
+        if cron is not None:
+            if not cron_job_id:
                 cron_stale = True
+            else:
+                try:
+                    cron_stale = not _followup_cron_job_exists(
+                        cron=cron, job_id=cron_job_id
+                    )
+                except Exception:
+                    cron_stale = True
+
+        if cron_stale:
+            now = datetime.now(timezone.utc)
+            post_tick = store.set_negotiation_followup_cron_metadata(
+                negotiation_id,
+                followup_cron_status="repair_required",
+                followup_cron_last_tick_at=now.isoformat().replace("+00:00", "Z"),
+                followup_cron_failure_count=int(
+                    negotiation.get("followup_cron_failure_count") or 0
+                )
+                + 1,
+            )
+            _record_negotiation_event_safely(
+                store=store,
+                negotiation_id=negotiation_id,
+                event_type="FOLLOWUP_CRON_STALE",
+                actor_type="system",
+                actor_id="meeting-time-negotiator",
+                payload={"followup_cron_job_id": cron_job_id},
+            )
+            _sync_negotiation_kanban_task_body(
+                negotiation_id=negotiation_id,
+                store=store,
+                kanban=kanban,
+            )
+            return {
+                "negotiation_id": negotiation_id,
+                "status": negotiation["status"],
+                "terminal": False,
+                "ticked": False,
+                "worked": False,
+                "cron_stale": True,
+                "repair_required": True,
+                "followup_cron_metadata": post_tick,
+            }
 
         raw_snapshots: list[dict[str, Any]] = []
         try:
@@ -1667,8 +1971,10 @@ def negotiation_followup_cron_tick(
         post_status = "active"
         post_failure_count = None
         if cron_stale:
-            post_status = "failed"
-            post_failure_count = int(negotiation.get("followup_cron_failure_count") or 0) + 1
+            post_status = "repair_required"
+            post_failure_count = (
+                int(negotiation.get("followup_cron_failure_count") or 0) + 1
+            )
         post_tick_kwargs = {
             "followup_cron_last_tick_at": now.isoformat().replace("+00:00", "Z"),
             "followup_cron_status": post_status,
@@ -1682,7 +1988,7 @@ def negotiation_followup_cron_tick(
             negotiation_id,
             **post_tick_kwargs,
         )
-        if cron_stale and post_status == "failed":
+        if cron_stale and post_status == "repair_required":
             _record_negotiation_event_safely(
                 store=store,
                 negotiation_id=negotiation_id,
@@ -1720,7 +2026,11 @@ def negotiation_followup_cron_tick(
                 store=store,
                 cron=cron,
                 kanban=kanban,
+                owner_profile=owner,
                 reason="terminal_state",
+                terminal_authority=owner,
+                terminal_reason="terminal_state",
+                terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
             )
             return {
                 **case_result,
@@ -2582,17 +2892,21 @@ def finalize_negotiation_case(
                 "calendar_update_called": False,
                 "idempotent": True,
             }
-            stop_result = _stop_followup_cron_if_terminal(
-                negotiation_id=negotiation_id,
-                store=store,
-                cron=cron,
-                kanban=kanban,
-                reason="finalize_idempotent",
-            )
-            if stop_result:
-                finalization["followup_cron_stopped"] = True
-                finalization["followup_cron_stop"] = stop_result
-            return _finalize_return(finalization)
+        stop_result = _stop_followup_cron_if_terminal(
+            negotiation_id=negotiation_id,
+            store=store,
+            cron=cron,
+            kanban=kanban,
+            owner_profile=owner,
+            reason="finalize_idempotent",
+            terminal_authority=owner,
+            terminal_reason="finalize_idempotent",
+            terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
+        )
+        if stop_result:
+            finalization["followup_cron_stopped"] = True
+            finalization["followup_cron_stop"] = stop_result
+        return _finalize_return(finalization)
 
         if attempt["status"] == "calendar_update_started":
             return _finalize_return({
@@ -2618,7 +2932,11 @@ def finalize_negotiation_case(
                 store=store,
                 cron=cron,
                 kanban=kanban,
+                owner_profile=owner,
                 reason="finalize_failed_permanent",
+                terminal_authority=owner,
+                terminal_reason="finalize_failed_permanent",
+                terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
             )
             return _finalize_return({
                 "attempt": attempt,
@@ -2639,7 +2957,11 @@ def finalize_negotiation_case(
                 store=store,
                 cron=cron,
                 kanban=kanban,
+                owner_profile=owner,
                 reason="requester_keep_original",
+                terminal_authority=owner,
+                terminal_reason="requester_keep_original",
+                terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
             )
             completed = _complete_kanban_if_terminal(
                 negotiation_id=negotiation_id,
@@ -2676,13 +2998,19 @@ def finalize_negotiation_case(
                     negotiation_id,
                     failure_reason="stale_meeting_revision",
                     finalize_status="failed_permanent",
+                    terminal_reason="stale_meeting_revision",
+                    terminal_authority=owner,
                 )
                 stop_result = _stop_followup_cron_if_terminal(
                     negotiation_id=negotiation_id,
                     store=store,
                     cron=cron,
                     kanban=kanban,
+                    owner_profile=owner,
                     reason="finalize_stale_revision",
+                    terminal_authority=owner,
+                    terminal_reason="stale_meeting_revision",
+                    terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
                 )
                 completed = _complete_kanban_if_terminal(
                     negotiation_id=negotiation_id,
@@ -2720,78 +3048,19 @@ def finalize_negotiation_case(
             started["finalize_attempt_id"],
             result=result,
         )
-        followup_monitor: dict[str, Any] | None = None
-        try:
-            negotiation_payload = json.loads(str(negotiation.get("payload_json") or "{}"))
-        except json.JSONDecodeError:
-            negotiation_payload = {}
-        start_followup_monitor = bool(
-            payload.get("start_rsvp_monitor_after_update")
-            or negotiation_payload.get("start_rsvp_monitor_after_update")
-        )
-        if start_followup_monitor:
-            if cron is None:
-                raise RuntimeError("cron is required to start follow-up RSVP monitor")
-            next_revision = str(
-                result.get("event_revision_id")
-                or result.get("revision")
-                or result.get("new_revision")
-                or ""
-            ).strip()
-            if not next_revision:
-                digest = hashlib.sha256(
-                    json.dumps(
-                        [
-                            "meeting_time_followup_revision:v1",
-                            negotiation_id,
-                            succeeded["finalize_attempt_id"],
-                            slot["start_time"],
-                            slot["end_time"],
-                        ],
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()[:24]
-                next_revision = f"rev_{digest}"
-            attendees = [
-                {
-                    "user_id": str(participant["attendee_user_id"]),
-                    "message_user_id": participant.get("message_user_id"),
-                    "display_name": participant.get("display_name"),
-                }
-                for participant in store.list_negotiation_participants(negotiation_id)
-                if str(participant.get("role") or "") != "requester"
-            ]
-            monitor_payload = {
-                **negotiation_payload,
-                "workspace_id": negotiation["workspace_id"],
-                "creator_user_id": negotiation["creator_user_id"],
-                "event_id": negotiation["event_id"],
-                "event_revision_id": next_revision,
-                "calendar_id": negotiation["calendar_id"],
-                "creator_delivery_binding": json.loads(
-                    str(negotiation["creator_delivery_binding_json"] or "{}")
-                ),
-                "start_time": slot["start_time"],
-                "end_time": slot["end_time"],
-                "timezone": slot["timezone"],
-                "attendees": attendees,
-                "source_negotiation_id": negotiation_id,
-                "source_finalize_attempt_id": succeeded["finalize_attempt_id"],
-            }
-            followup_monitor = start_monitor(
-                monitor_payload,
-                store=store,
-                cron=cron,
-            )
 
         stop_result = _stop_followup_cron_if_terminal(
             negotiation_id=negotiation_id,
             store=store,
             cron=cron,
             kanban=kanban,
+            owner_profile=owner,
             reason="finalize_with_calendar_update",
+            terminal_authority=owner,
+            terminal_reason="finalize_with_calendar_update",
+            terminal_event_revision_id=str(
+                result.get("event_revision_id") or negotiation.get("event_revision_id") or ""
+            ),
         )
         completed = _complete_kanban_if_terminal(
             negotiation_id=negotiation_id,
@@ -2804,7 +3073,6 @@ def finalize_negotiation_case(
             "calendar_update_called": True,
             "result": result,
             "kanban_completed": completed,
-            **({"followup_monitor": followup_monitor} if followup_monitor else {}),
             "followup_cron_stopped": bool(stop_result),
             "followup_cron_stop": stop_result,
         }
@@ -2926,288 +3194,7 @@ def monitor_tick(
     delivery_client: DeliveryClient | None = None,
     kanban: KanbanClient | None = None,
 ) -> dict[str, Any]:
-    monitor = store.get_monitor(str(payload["monitor_id"]))
-    if _monitor_is_terminal(monitor):
-        cleaned = _cleanup_monitor_owned_kanban_tasks(
-            monitor,
-            store=store,
-            kanban=kanban,
-            reason="monitor_already_terminal",
-        )
-        _dismiss_monitor_cron(monitor, cron)
-        return {
-            "monitor_id": monitor["monitor_id"],
-            "status": str(monitor.get("status") or "complete"),
-            "terminal": True,
-            "pending_attendees": [],
-            "followups_sent": 0,
-            "escalations_sent": 0,
-            "kanban_cleanup": cleaned,
-        }
-    interval_minutes = _followup_interval_minutes(payload, monitor, cron)
-    if "max_followups" in payload and payload.get("max_followups") is not None:
-        max_followups = int(payload.get("max_followups") or 0)
-    else:
-        state = store.get_workspace_state(str(monitor["workspace_id"]))
-        max_followups = int(state.get("max_followups") or 3)
-    live_status = feishu_client.get_attendee_response_statuses(
-        calendar_id=monitor["calendar_id"],
-        event_id=monitor["event_id"],
-    )
-    store.update_attendee_statuses(monitor["monitor_id"], live_status)
-    negotiation_ids: list[str] = []
-    negotiation_kanban_errors: list[str] = []
-    for attendee in store.list_new_declined_attendees_requiring_negotiation(
-        monitor["monitor_id"]
-    ):
-        negotiation = store.create_or_get_negotiation_case(
-            monitor_id=monitor["monitor_id"],
-            event_revision_id=monitor["event_revision_id"],
-            trigger_attendee_user_id=str(attendee["attendee_user_id"]),
-        )
-        negotiation_ids.append(str(negotiation["negotiation_id"]))
-        try:
-            negotiation = ensure_negotiation_kanban_task(
-                negotiation_id=str(negotiation["negotiation_id"]),
-                store=store,
-                kanban=kanban,
-                session_id=_session_id_from_payload_json(monitor.get("payload_json"))
-                or None,
-            )
-            try:
-                ensure_negotiation_followup_cron(
-                    negotiation_id=str(negotiation["negotiation_id"]),
-                    store=store,
-                    cron=cron,
-                    kanban=kanban,
-                )
-            except Exception as exc:
-                negotiation_kanban_errors.append(str(exc))
-            store.mark_monitor_negotiating(
-                monitor["monitor_id"],
-                negotiation_id=str(negotiation["negotiation_id"]),
-            )
-        except Exception as exc:
-            negotiation_kanban_errors.append(str(exc))
-    if negotiation_ids and not negotiation_kanban_errors:
-        negotiating = store.mark_monitor_negotiating(
-            monitor["monitor_id"],
-            negotiation_id=negotiation_ids[0],
-        )
-        if cron is not None:
-            _dismiss_monitor_cron(negotiating, cron)
-        kanban_task_ids = []
-        for negotiation_id in sorted(set(negotiation_ids)):
-            task_id = str(
-                store.get_negotiation(negotiation_id).get("kanban_task_id") or ""
-            )
-            if task_id:
-                kanban_task_ids.append(task_id)
-        result = {
-            "monitor_id": monitor["monitor_id"],
-            "status": "negotiating",
-            "negotiation_ids": sorted(set(negotiation_ids)),
-            "kanban_task_ids": kanban_task_ids,
-            "all_responded": False,
-            "all_exhausted": False,
-            "pending_attendees": [],
-            "followups_sent": 0,
-            "escalations_sent": 0,
-        }
-        return result
-    if negotiation_ids and negotiation_kanban_errors:
-        cleaned = _cleanup_monitor_owned_kanban_tasks(
-            monitor,
-            store=store,
-            kanban=kanban,
-            reason="negotiation_handoff_failed",
-        )
-        return {
-            "monitor_id": monitor["monitor_id"],
-            "status": "negotiation_handoff_failed",
-            "negotiation_ids": sorted(set(negotiation_ids)),
-            "negotiation_kanban_errors": negotiation_kanban_errors,
-            "all_responded": False,
-            "all_exhausted": False,
-            "pending_attendees": [],
-            "followups_sent": 0,
-            "escalations_sent": 0,
-            "kanban_cleanup": cleaned,
-        }
-    attendees = store.list_attendees(monitor["monitor_id"])
-    if _all_terminal(attendees):
-        completed = store.mark_monitor_complete(monitor["monitor_id"])
-        cleaned = _cleanup_monitor_owned_kanban_tasks(
-            completed,
-            store=store,
-            kanban=kanban,
-            reason="monitor_complete_all_responded",
-        )
-        _dismiss_monitor_cron(completed, cron)
-        return {
-            "monitor_id": monitor["monitor_id"],
-            "status": "complete",
-            "all_responded": True,
-            "all_exhausted": False,
-            "pending_attendees": [],
-            "followups_sent": 0,
-            "escalations_sent": 0,
-            "kanban_cleanup": cleaned,
-        }
-
-    if _all_exhausted_unanswered(attendees, max_followups=max_followups):
-        return _complete_all_exhausted_unanswered(
-            monitor,
-            attendees,
-            store=store,
-            cron=cron,
-            delivery_client=delivery_client,
-            kanban=kanban,
-        )
-
-    pending = store.list_pending_followup_attendees(monitor["monitor_id"])
-
-    if not pending:
-        completed = store.mark_monitor_complete(monitor["monitor_id"])
-        cleaned = _cleanup_monitor_owned_kanban_tasks(
-            completed,
-            store=store,
-            kanban=kanban,
-            reason="monitor_complete_no_pending_attendees",
-        )
-        _dismiss_monitor_cron(completed, cron)
-        return {
-            "monitor_id": monitor["monitor_id"],
-            "status": "complete",
-            "all_responded": _all_terminal(attendees),
-            "all_exhausted": False,
-            "pending_attendees": [],
-            "followups_sent": 0,
-            "escalations_sent": 0,
-            "kanban_cleanup": cleaned,
-        }
-
-    followups_sent = 0
-    escalations_sent = 0
-    for attendee in pending:
-        attendee_user_id = str(attendee["attendee_user_id"])
-        if int(attendee["followup_count"] or 0) >= max_followups:
-            message = _render_creator_escalation(
-                monitor,
-                attendee,
-                reason="followup_limit_reached",
-            )
-            if cron is not None:
-                task = create_creator_escalation_task(
-                    monitor_id=monitor["monitor_id"],
-                    attendee_user_id=attendee_user_id,
-                    reason="followup_limit_reached",
-                    store=store,
-                    cron=cron,
-                    message=message,
-                    ensure_retry_cron=False,
-                )
-            else:
-                task = store.create_delivery_task(
-                    monitor_id=monitor["monitor_id"],
-                    task_type="creator_escalation",
-                    target_user_id=monitor["creator_user_id"],
-                    delivery_binding=json.loads(
-                        monitor["creator_delivery_binding_json"]
-                    ),
-                    payload={
-                        "attendee_user_id": attendee_user_id,
-                        "reason": "followup_limit_reached",
-                        "message": message,
-                    },
-                )
-            delivered = _deliver_creator_task(
-                task,
-                store=store,
-                delivery_client=delivery_client,
-            )
-            if not delivered and cron is not None:
-                try:
-                    ensure_delivery_retry_cron(
-                        workspace_id=monitor["workspace_id"], cron=cron
-                    )
-                except Exception as exc:
-                    store.mark_delivery_retry_scheduler_unavailable(
-                        workspace_id=monitor["workspace_id"],
-                        detail=str(exc),
-                    )
-            store.mark_attendee_escalated(
-                monitor["monitor_id"],
-                attendee_user_id=attendee_user_id,
-                creator_user_id=monitor["creator_user_id"],
-                reason="followup_limit_reached",
-                delivery_task_id=task["delivery_task_id"],
-                status="sent" if delivered else "pending",
-            )
-            escalations_sent += 1
-            continue
-
-        if not _followup_due(attendee, interval_minutes=interval_minutes):
-            continue
-
-        target_id = str(attendee.get("message_user_id") or attendee_user_id)
-        result = feishu_client.send_attendee_message(
-            attendee_open_ids=[target_id],
-            message=_render_reminder(monitor, attendee),
-        )
-        delivered = result.get("delivered") or []
-        failed = result.get("failed") or []
-        if delivered:
-            store.record_followup_attempt(
-                monitor["monitor_id"],
-                attendee_user_id=attendee_user_id,
-                channel="feishu",
-                target_id=target_id,
-                status="sent",
-                message_id=None,
-                error_detail=None,
-            )
-            followups_sent += 1
-        elif failed:
-            store.record_followup_attempt(
-                monitor["monitor_id"],
-                attendee_user_id=attendee_user_id,
-                channel="feishu",
-                target_id=target_id,
-                status="failed",
-                message_id=None,
-                error_detail=json.dumps(failed, ensure_ascii=False, sort_keys=True),
-            )
-
-    refreshed_attendees = store.list_attendees(monitor["monitor_id"])
-    if (
-        followups_sent > 0
-        and escalations_sent == 0
-        and _all_exhausted_unanswered(
-            refreshed_attendees,
-            max_followups=max_followups,
-        )
-    ):
-        result = _complete_all_exhausted_unanswered(
-            monitor,
-            refreshed_attendees,
-            store=store,
-            cron=cron,
-            delivery_client=delivery_client,
-        )
-        result["followups_sent"] = followups_sent
-        return result
-
-    remaining = store.list_pending_followup_attendees(monitor["monitor_id"])
-    return {
-        "monitor_id": monitor["monitor_id"],
-        "status": "active",
-        "all_responded": False,
-        "all_exhausted": False,
-        "pending_attendees": [str(item["attendee_user_id"]) for item in remaining],
-        "followups_sent": followups_sent,
-        "escalations_sent": escalations_sent,
-    }
+    raise RuntimeError("legacy RSVP monitor tick is retired in v3")
 
 
 def monitor_stop(
@@ -3217,23 +3204,9 @@ def monitor_stop(
     cron: CronClient,
     kanban: KanbanClient | None = None,
 ) -> dict[str, Any]:
-    monitor_id = str(payload["monitor_id"])
-    monitor = store.get_monitor(monitor_id)
-    _dismiss_monitor_cron(monitor, cron)
-    reason = str(payload.get("reason") or "operator stop")
-    cancelled = store.mark_monitor_cancelled(monitor_id, detail=reason)
-    cleaned = _cleanup_monitor_owned_kanban_tasks(
-        cancelled,
-        store=store,
-        kanban=kanban,
-        reason=f"monitor_stop:{reason}",
-    )
-    return {
-        "monitor_id": monitor_id,
-        "stopped": True,
-        "status": cancelled["status"],
-        "kanban_cleanup": cleaned,
-    }
+    _ = cron
+    _ = kanban
+    raise RuntimeError("legacy RSVP monitor stop is retired in v3")
 
 
 def escalation_retry_tick(

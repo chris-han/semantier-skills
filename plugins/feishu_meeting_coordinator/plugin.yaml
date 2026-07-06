@@ -1,6 +1,6 @@
 name: feishu_meeting_coordinator
 version: 0.2.0
-description: Feishu meeting RSVP monitoring and follow-up orchestration.
+description: Feishu meeting creation and negotiation follow-up orchestration.
 author: Semantier
 kind: standalone
 platforms:

@@ -83,17 +83,9 @@ class MeetingCoordinatorWebApiCronClient:
                 plugin_tools = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(plugin_tools)
         """
-        monitor_prefix = "meeting-rsvp-monitor:"
         delivery_prefix = "meeting-rsvp-delivery-retry:"
         followup_prefix = "meeting-time-negotiator-followup:"
-        if name.startswith(monitor_prefix):
-            monitor_id = name[len(monitor_prefix):].strip()
-            if not monitor_id:
-                raise RuntimeError("missing monitor id for no-agent meeting coordinator job")
-            invocation = f"""
-                result_text = plugin_tools.feishu_meeting_monitor_tick({{"monitor_id": {monitor_id!r}}})
-            """
-        elif name.startswith(delivery_prefix):
+        if name.startswith(delivery_prefix):
             retry_workspace_id = name[len(delivery_prefix):].strip()
             if retry_workspace_id != workspace_id:
                 raise RuntimeError("delivery retry cron workspace does not match request context")

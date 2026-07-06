@@ -31,9 +31,14 @@ export default function NegotiationDetailDrawer({
   const title = text(metadata.meeting_title, "Meeting negotiation");
   const status = text(metadata.status, "pending");
   const followupStatus = text(metadata.followup_cron_status, "not_created");
+  const followupCronJobId = text(metadata.followup_cron_job_id);
   const nextFollowupAt = text(metadata.next_followup_at, "not scheduled");
   const lastTickAt = text(metadata.followup_cron_last_tick_at, "never");
   const failureCount = safeCount(metadata.followup_cron_failure_count, 0);
+  const terminalAuthority = text(metadata.terminal_authority);
+  const terminalAt = text(metadata.terminal_at);
+  const terminalReason = text(metadata.terminal_reason);
+  const terminalEventRevisionId = text(metadata.terminal_event_revision_id);
   const declinedAttendee = text(metadata.declined_attendee_name, "Declined attendee");
   const bestSlot = text(metadata.best_slot, "No candidate slot");
   const bestSlotId = text(metadata.best_slot_id);
@@ -60,12 +65,22 @@ export default function NegotiationDetailDrawer({
         <dd>{declinedAttendee}</dd>
         <dt>Follow-up cron</dt>
         <dd>{followupStatus}</dd>
+        <dt>Follow-up cron job</dt>
+        <dd>{followupCronJobId || "not assigned"}</dd>
         <dt>Next follow-up</dt>
         <dd>{nextFollowupAt}</dd>
         <dt>Last cron tick</dt>
         <dd>{lastTickAt}</dd>
         <dt>Cron failures</dt>
         <dd>{failureCount}</dd>
+        <dt>Terminal authority</dt>
+        <dd>{terminalAuthority || "n/a"}</dd>
+        <dt>Terminal time</dt>
+        <dd>{terminalAt || "n/a"}</dd>
+        <dt>Terminal reason</dt>
+        <dd>{terminalReason || "n/a"}</dd>
+        <dt>Terminal revision</dt>
+        <dd>{terminalEventRevisionId || "n/a"}</dd>
         <dt>Best slot</dt>
         <dd>{bestSlot}</dd>
         <dt>Missing required attendees</dt>

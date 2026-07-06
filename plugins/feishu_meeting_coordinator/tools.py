@@ -139,19 +139,9 @@ class _LocalCronClient:
                 plugin_tools = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(plugin_tools)
         """
-        monitor_prefix = "meeting-rsvp-monitor:"
         delivery_prefix = "meeting-rsvp-delivery-retry:"
         followup_prefix = "meeting-time-negotiator-followup:"
-        if name.startswith(monitor_prefix):
-            monitor_id = name[len(monitor_prefix) :].strip()
-            if not monitor_id:
-                raise RuntimeError(
-                    "missing monitor id for no-agent meeting coordinator job"
-                )
-            invocation = f"""
-                result_text = plugin_tools.feishu_meeting_monitor_tick({{"monitor_id": {monitor_id!r}}})
-            """
-        elif name.startswith(delivery_prefix):
+        if name.startswith(delivery_prefix):
             retry_workspace_id = name[len(delivery_prefix) :].strip()
             if retry_workspace_id != workspace_id:
                 raise RuntimeError(
@@ -375,38 +365,6 @@ class _DefaultGateway:
             raise RuntimeError("Semantier gateway binding required")
         return _LocalCronClient(hermes_home)
 
-    def start_monitor(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        return meeting_coordinator_gateway.start_monitor(
-            payload,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
-            cron=self._cron(),
-        )
-
-    def monitor_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        store = meeting_coordinator_store.MeetingCoordinatorStore()
-        monitor_id = _text(payload.get("monitor_id"))
-        monitor = store.get_monitor(monitor_id) if monitor_id else None
-        return meeting_coordinator_gateway.monitor_tick(
-            payload,
-            store=store,
-            feishu_client=_FeishuClient(),
-            cron=self._cron_for_monitor(monitor),
-            delivery_client=_CreatorDeliveryClient(),
-        )
-
-    def monitor_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        return meeting_coordinator_gateway.monitor_stop(
-            payload,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
-            cron=self._cron(),
-        )
-
     def escalation_retry_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
 
@@ -463,11 +421,17 @@ class _DefaultGateway:
         if not negotiation_id:
             raise ValueError("negotiation_id is required")
         schedule = str(payload.get("schedule") or "every 2m")
+        owner_profile = str(payload.get("owner_profile") or "").strip() or None
+        owner_idempotency_key = (
+            str(payload.get("owner_idempotency_key") or "").strip() or None
+        )
         return meeting_coordinator_gateway.ensure_negotiation_followup_cron(
             negotiation_id=negotiation_id,
             store=meeting_coordinator_store.MeetingCoordinatorStore(),
             cron=self._cron(),
             schedule=schedule,
+            owner_profile=owner_profile,
+            owner_idempotency_key=owner_idempotency_key,
         )
 
     def negotiation_followup_cron_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -476,11 +440,23 @@ class _DefaultGateway:
         negotiation_id = _text(payload.get("negotiation_id"))
         if not negotiation_id:
             raise ValueError("negotiation_id is required")
+        expected_followup_cron_job_id = payload.get("expected_followup_cron_job_id")
+        owner_profile = str(payload.get("owner_profile") or "").strip() or None
+        owner_idempotency_key = (
+            str(payload.get("owner_idempotency_key") or "").strip() or None
+        )
         return meeting_coordinator_gateway.stop_negotiation_followup_cron(
             negotiation_id=negotiation_id,
             store=meeting_coordinator_store.MeetingCoordinatorStore(),
             cron=self._cron(),
+            owner_profile=owner_profile,
+            owner_idempotency_key=owner_idempotency_key,
             reason=_text(payload.get("reason") or "operator_stop"),
+            expected_followup_cron_job_id=(
+                str(expected_followup_cron_job_id)
+                if expected_followup_cron_job_id is not None
+                else None
+            ),
         )
 
     def negotiation_followup_cron_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -551,6 +527,212 @@ class _DefaultGateway:
         if not result["ok"]:
             raise RuntimeError(str(result["reason"]))
         return result["record"]
+
+    def negotiation_resume(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _, meeting_coordinator_store = _meeting_modules()
+
+        negotiation_id = _text(payload.get("negotiation_id"))
+        if not negotiation_id:
+            raise ValueError("negotiation_id is required")
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        return {
+            "negotiation": store.get_negotiation(negotiation_id),
+            "participants": store.list_negotiation_participants(negotiation_id),
+            "candidate_slots": store.list_candidate_slots(negotiation_id),
+            "votes": store.list_negotiation_votes(negotiation_id),
+            "events": store.list_negotiation_events(negotiation_id),
+            "outbound_messages": store.list_outbound_negotiation_messages(negotiation_id),
+            "finalize_attempts": store.list_finalize_attempts(negotiation_id),
+        }
+
+    def negotiation_rsvp_poll(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _, meeting_coordinator_store = _meeting_modules()
+
+        negotiation_id = _text(payload.get("negotiation_id"))
+        if not negotiation_id:
+            raise ValueError("negotiation_id is required")
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        negotiation = store.get_negotiation(negotiation_id)
+        raw_statuses: list[dict[str, Any]] = []
+        snapshots: list[dict[str, Any]] = []
+
+        calendar_id = _text(negotiation.get("calendar_id"))
+        event_id = _text(negotiation.get("event_id"))
+        if calendar_id and event_id:
+            attendee_statuses = _FeishuClient().get_attendee_response_statuses(
+                calendar_id=calendar_id,
+                event_id=event_id,
+            )
+            if isinstance(attendee_statuses, list):
+                raw_statuses = list(attendee_statuses)
+                for attendee in raw_statuses:
+                    if not isinstance(attendee, dict):
+                        continue
+                    attendee_user_id = _text(attendee.get("user_id"))
+                    if not attendee_user_id:
+                        continue
+                    normalized = _normalize_feishu_rsvp_status(
+                        attendee.get("response_status")
+                    )
+                    persisted = normalized
+                    if normalized == "accepted":
+                        persisted = "accepted_slot"
+                    elif normalized == "declined":
+                        persisted = "declined_slot"
+                    else:
+                        persisted = "unknown"
+                    try:
+                        store.update_negotiation_participant_response(
+                            negotiation_id=negotiation_id,
+                            attendee_user_id=attendee_user_id,
+                            latest_response_status=persisted,
+                            responded=normalized in {"accepted", "declined"},
+                            latest_slot_id=_text(attendee.get("time_slot_id")) or None,
+                        )
+                    except KeyError:
+                        continue
+                    snapshots.append(
+                        {
+                            "attendee_user_id": attendee_user_id,
+                            "response_status": normalized,
+                        }
+                    )
+
+        _record_negotiation_event_safely(
+            store=store,
+            negotiation_id=negotiation_id,
+            event_type="FOLLOWUP_RSVP_POLLED",
+            actor_type="system",
+            actor_id="meeting-time-negotiator",
+            payload={
+                "snapshot_count": len(snapshots),
+                "snapshot": snapshots,
+            },
+        )
+        return {
+            "negotiation_id": negotiation_id,
+            "calendar_id": calendar_id,
+            "event_id": event_id,
+            "response_statuses": raw_statuses,
+            "normalized_responses": snapshots,
+        }
+
+    def negotiation_due_followups_list(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _, meeting_coordinator_store = _meeting_modules()
+
+        negotiation_id = _text(payload.get("negotiation_id"))
+        if not negotiation_id:
+            raise ValueError("negotiation_id is required")
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        negotiation = store.get_negotiation(negotiation_id)
+
+        workspace_state = store.get_workspace_state(str(negotiation["workspace_id"]))
+        interval_minutes = int(
+            payload.get("followup_interval_minutes")
+            if payload.get("followup_interval_minutes") is not None
+            else workspace_state.get("monitor_interval_minutes")
+            or 2
+        )
+        max_followups = int(
+            payload.get("max_followups")
+            if payload.get("max_followups") is not None
+            else workspace_state.get("max_followups")
+            or 3
+        )
+
+        due_followups: list[dict[str, Any]] = []
+        for participant in store.list_negotiation_participants(negotiation_id):
+            if not _followup_reminder_needed(participant):
+                continue
+            if int(participant.get("followup_count") or 0) >= max_followups:
+                continue
+            if not _followup_due(participant, interval_minutes=interval_minutes):
+                continue
+            due_followups.append(
+                {
+                    "attendee_user_id": _text(participant.get("attendee_user_id")),
+                    "followup_count": int(participant.get("followup_count") or 0),
+                    "last_followup_at": _text(participant.get("last_followup_at")),
+                    "latest_response_status": _text(
+                        participant.get("latest_response_status")
+                    ),
+                }
+            )
+        return {
+            "negotiation_id": negotiation_id,
+            "due_count": len(due_followups),
+            "followup_interval_minutes": interval_minutes,
+            "max_followups": max_followups,
+            "due_followups": due_followups,
+            "status": str(negotiation.get("status") or ""),
+        }
+
+    def negotiation_requester_decision_request(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        _, meeting_coordinator_store = _meeting_modules()
+
+        negotiation_id = _text(payload.get("negotiation_id"))
+        if not negotiation_id:
+            raise ValueError("negotiation_id is required")
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        negotiation = store.get_negotiation(negotiation_id)
+        if str(negotiation.get("status") or "") != "awaiting_requester_decision":
+            return {
+                "negotiation_id": negotiation_id,
+                "decision_needed": False,
+                "status": str(negotiation.get("status") or ""),
+            }
+        candidate_slots: list[dict[str, str]] = []
+        for slot in store.list_candidate_slots(negotiation_id):
+            candidate_slots.append(
+                {
+                    "slot_id": _text(slot.get("slot_id")),
+                    "start_time": _text(slot.get("start_time")),
+                    "end_time": _text(slot.get("end_time")),
+                    "timezone": _text(slot.get("timezone")),
+                }
+            )
+        return {
+            "negotiation_id": negotiation_id,
+            "decision_needed": True,
+            "status": str(negotiation.get("status") or ""),
+            "allowed_actions": [
+                "requester_cancel",
+                "requester_keep_original",
+                "requester_select_slot",
+            ],
+            "candidate_slots": candidate_slots,
+            "original_start_time": _text(negotiation.get("original_start_time")),
+            "original_end_time": _text(negotiation.get("original_end_time")),
+            "timezone": _text(negotiation.get("timezone")),
+        }
+
+    def negotiation_requester_decision_record(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _, meeting_coordinator_store = _meeting_modules()
+
+        negotiation_id = _text(payload.get("negotiation_id"))
+        requested_by_user_id = _text(
+            payload.get("requested_by_user_id") or payload.get("requester_open_id")
+        )
+        action = _text(payload.get("action") or payload.get("request"))
+        if not negotiation_id or not requested_by_user_id or not action:
+            raise ValueError("negotiation_id, requested_by_user_id, and action are required")
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        negotiation = store.get_negotiation(negotiation_id)
+        if requested_by_user_id != _text(negotiation.get("creator_user_id")):
+            raise PermissionError("requester authority mismatch")
+
+        return self.negotiation_requester_decision(
+            {
+                "negotiation_id": negotiation_id,
+                "requested_by_user_id": requested_by_user_id,
+                "action": action,
+                "slot_id": _text(
+                    payload.get("slot_id") or payload.get("selected_slot_id")
+                ),
+            }
+        )
 
 
 def _default_gateway() -> _DefaultGateway:
@@ -932,139 +1114,6 @@ def _creator_delivery_binding(
     }
 
 
-def _monitor_attendees_from_values(
-    values: list[Any], requester_open_id: str
-) -> list[dict[str, Any]]:
-    attendees: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for value in values:
-        if isinstance(value, dict):
-            user_id = _text(
-                value.get("user_id")
-                or value.get("open_id")
-                or value.get("attendee_user_id")
-            )
-            message_user_id = _text(value.get("message_user_id") or user_id)
-            display_name = _text(
-                value.get("display_name") or value.get("name") or user_id
-            )
-        else:
-            user_id = _text(value)
-            message_user_id = user_id
-            display_name = user_id
-        if not user_id or user_id == requester_open_id or user_id in seen:
-            continue
-        seen.add(user_id)
-        attendees.append(
-            {
-                "user_id": user_id,
-                "message_user_id": message_user_id,
-                "display_name": display_name,
-            }
-        )
-    return attendees
-
-
-def _live_monitor_attendees(
-    payload: dict[str, Any], requester_open_id: str
-) -> list[dict[str, Any]]:
-    event_id = _text(payload.get("event_id"))
-    if not event_id:
-        return []
-    try:
-        status = _feishu_helper().list_attendee_status(
-            event_id=event_id,
-            calendar_id=payload.get("calendar_id"),
-            requester_open_id=requester_open_id,
-            page_size=100,
-        )
-    except Exception:
-        return []
-    attendees = status.get("attendees") if isinstance(status, dict) else None
-    if not isinstance(attendees, list):
-        return []
-    values = [
-        item
-        for item in attendees
-        if isinstance(item, dict)
-        and not item.get("is_organizer")
-        and _text(item.get("user_id") or item.get("open_id")) != requester_open_id
-    ]
-    return _monitor_attendees_from_values(values, requester_open_id)
-
-
-def _prepare_monitor_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    metadata = _session_metadata()
-    requester_open_id = _text(_requester_open_id(payload))
-    session_workspace_id = _workspace_id_from_session(metadata)
-    workspace_id = session_workspace_id or _text(payload.get("workspace_id"))
-    if not workspace_id:
-        raise RuntimeError("workspace_id is required for RSVP monitor start")
-    if not requester_open_id:
-        raise RuntimeError("creator_user_id is required for RSVP monitor start")
-
-    attendees = _monitor_attendees_from_values(
-        _list_arg(
-            payload,
-            "attendees",
-            "attendee",
-            "participants",
-            "participant",
-            "attendee_open_ids",
-            "attendee_open_id",
-        ),
-        requester_open_id,
-    )
-    if not attendees:
-        attendees = _live_monitor_attendees(payload, requester_open_id)
-    if not attendees:
-        raise RuntimeError(
-            "at least one non-requester attendee is required for RSVP monitor"
-        )
-
-    prepared = dict(payload)
-    prepared.pop("scheduler_failure_terminal", None)
-    prepared["workspace_id"] = workspace_id
-    prepared["creator_user_id"] = requester_open_id
-    prepared["platform"] = _text(payload.get("platform")) or "feishu"
-    prepared["event_revision_id"] = _text(payload.get("event_revision_id")) or _text(
-        payload.get("event_id")
-    )
-    prepared["creator_delivery_binding"] = _creator_delivery_binding(
-        metadata, requester_open_id
-    )
-    if prepared["creator_delivery_binding"].get("session_id"):
-        prepared["session_id"] = prepared["creator_delivery_binding"]["session_id"]
-    if not prepared.get("language"):
-        prepared["language"] = (
-            metadata.get("language") or payload.get("locale") or payload.get("language")
-        )
-    payload_organizer_name = _text(
-        payload.get("organizer_name") or payload.get("organizer_identity")
-    )
-    organizer_name = (
-        _requester_display_name_from_metadata(metadata)
-        or _requester_display_name_from_contacts(requester_open_id)
-        or (
-            ""
-            if _is_generic_organizer_name(payload_organizer_name)
-            else payload_organizer_name
-        )
-        or requester_open_id
-    )
-    if organizer_name:
-        prepared["organizer_name"] = organizer_name
-    prepared["attendees"] = attendees
-    if (
-        payload.get("meeting_start_time") is None
-        and payload.get("start_time") is not None
-    ):
-        prepared["meeting_start_time"] = payload.get("start_time")
-    if payload.get("meeting_end_time") is None and payload.get("end_time") is not None:
-        prepared["meeting_end_time"] = payload.get("end_time")
-    return prepared
-
-
 def feishu_contacts_search(args, **kwargs):
     payload = _payload(args)
     queries = _contact_search_queries(payload)
@@ -1177,7 +1226,7 @@ def feishu_meeting_create(args, **kwargs):
     payload = _payload(args)
     if payload.get("is_recurrent_meeting") is True:
         return _error(
-            "recurrent meetings are not supported by the v0.1 RSVP monitor flow"
+            "recurrent meetings are not supported"
         )
     try:
         requester_open_id = _requester_open_id(payload)
@@ -1217,68 +1266,14 @@ def feishu_meeting_create(args, **kwargs):
     except Exception as exc:
         return _helper_error(exc)
 
-    if isinstance(result, dict) and payload.get("start_rsvp_monitor") is not False:
-        monitor_result = _start_rsvp_monitor_for_created_meeting(
-            payload=payload,
-            meeting=result,
-            attendees=attendees,
-            requester_open_id=_text(requester_open_id),
-            kwargs=kwargs,
+    if "start_rsvp_monitor" in payload:
+        warnings = list(result.get("warnings") or [])
+        warnings.append(
+            "start_rsvp_monitor is no longer supported; use negotiation follow-up cron flow."
         )
-        result = dict(result)
-        result["rsvp_monitor"] = monitor_result
-        if not monitor_result.get("ok"):
-            warnings = list(result.get("warnings") or [])
-            warnings.append(
-                f"RSVP monitor was not started: {monitor_result.get('error')}"
-            )
-            result["warnings"] = warnings
+        result["warnings"] = warnings
 
     return _ok("result", result)
-
-
-def _start_rsvp_monitor_for_created_meeting(
-    *,
-    payload: dict[str, Any],
-    meeting: dict[str, Any],
-    attendees: list[Any],
-    requester_open_id: str,
-    kwargs: dict[str, Any],
-) -> dict[str, Any]:
-    event_id = _text(meeting.get("event_id"))
-    calendar_id = _text(meeting.get("calendar_id"))
-    if not event_id or not calendar_id:
-        return {
-            "ok": False,
-            "error": "event_id and calendar_id are required to start RSVP monitor",
-        }
-    try:
-        monitor_payload = _prepare_monitor_payload(
-            {
-                "event_id": event_id,
-                "event_revision_id": _text(meeting.get("event_revision_id"))
-                or event_id,
-                "calendar_id": calendar_id,
-                "attendees": attendees,
-                "requester_open_id": requester_open_id,
-                "meeting_title": payload.get("title"),
-                "meeting_start_time": payload.get("start_time"),
-                "meeting_end_time": payload.get("end_time"),
-                "timezone": payload.get("timezone") or "Asia/Shanghai",
-                "organizer_name": meeting.get("organizer_identity")
-                or meeting.get("organizer_name"),
-                "calendar_item_url": (
-                    meeting.get("calendar_item_url")
-                    or meeting.get("event_url")
-                    or meeting.get("join_url")
-                    or meeting.get("calendar_assistant_url")
-                ),
-            }
-        )
-        monitor = _gateway(kwargs).start_monitor(monitor_payload)
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
-    return {"ok": True, "monitor": monitor}
 
 
 def feishu_meeting_negotiation_start(args, **kwargs):
@@ -1451,31 +1446,6 @@ def feishu_meeting_time_update(args, **kwargs):
     )
 
 
-def feishu_meeting_monitor_start(args, **kwargs):
-    try:
-        payload = _prepare_monitor_payload(dict(args or {}))
-        monitor = _gateway(kwargs).start_monitor(payload)
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("monitor", monitor)
-
-
-def feishu_meeting_monitor_tick(args, **kwargs):
-    try:
-        result = _gateway(kwargs).monitor_tick(dict(args or {}))
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("result", result)
-
-
-def feishu_meeting_monitor_stop(args, **kwargs):
-    try:
-        result = _gateway(kwargs).monitor_stop(dict(args or {}))
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("result", result)
-
-
 def feishu_meeting_negotiation_case_start(args, **kwargs):
     try:
         result = _gateway(kwargs).negotiation_case_start(dict(args or {}))
@@ -1578,3 +1548,113 @@ def feishu_meeting_delivery_task_requeue(args, **kwargs):
     except Exception as exc:
         return _error(str(exc))
     return _ok("delivery_task", task)
+
+
+def feishu_meeting_negotiation_resume(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_resume(dict(args or {}))
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_rsvp_poll(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_rsvp_poll(dict(args or {}))
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_due_followups_list(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_due_followups_list(dict(args or {}))
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_requester_decision_request(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_requester_decision_request(
+            dict(args or {})
+        )
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_requester_decision_record(args, **kwargs):
+    try:
+        result = _gateway(kwargs).negotiation_requester_decision_record(
+            dict(args or {})
+        )
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_reply_ingest(args, **kwargs):
+    payload = dict(args or {})
+    if not payload.get("participant_user_id"):
+        payload["participant_user_id"] = str(
+            payload.get("sender_user_id") or payload.get("attendee_user_id") or ""
+        ).strip() or None
+    if (
+        not payload.get("message_id")
+        and isinstance(payload.get("provider_message_id"), str)
+        and str(payload.get("provider_message_id")).strip()
+    ):
+        payload["message_id"] = str(payload.get("provider_message_id"))
+    if not payload.get("reply_text") and isinstance(payload.get("raw_text"), str):
+        payload["reply_text"] = str(payload.get("raw_text"))
+    try:
+        result = _gateway(kwargs).negotiation_case_submit_reply(payload)
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_vote_record(args, **kwargs):
+    payload = dict(args or {})
+    if not payload.get("message_id") and isinstance(payload.get("provider_message_id"), str):
+        candidate = str(payload.get("provider_message_id")).strip()
+        if candidate:
+            payload["message_id"] = candidate
+    if not payload.get("participant_user_id") and payload.get("attendee_user_id"):
+        payload["participant_user_id"] = str(payload.get("attendee_user_id"))
+    try:
+        result = _gateway(kwargs).negotiation_case_submit_reply(payload)
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("result", result)
+
+
+def feishu_meeting_slot_normalize(args, **kwargs):
+    payload = _payload(args)
+    values = [
+        str(item)
+        for item in _list_arg(payload, "slots", "slot", "candidate_slots", "candidate_slot")
+    ]
+    if not values:
+        return _error("candidate_slots is required")
+    timezone_name = str(payload.get("timezone") or "Asia/Shanghai")
+    try:
+        normalized = _normalize_temporal_slots(
+            values,
+            timezone_name=timezone_name,
+            allow_past=bool(payload.get("allow_past")),
+        )
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("normalized_slots", normalized)
+
+
+def feishu_meeting_negotiation_cancel(args, **kwargs):
+    try:
+        payload = dict(args or {})
+        payload.setdefault("operator_user_id", payload.get("requested_by_user_id"))
+        result = _gateway(kwargs).negotiation_case_stop(payload)
+    except Exception as exc:
+        return _error(str(exc))
+    return _ok("negotiation", result)

@@ -1,7 +1,7 @@
 ---
 name: feishu-bot-meeting-coordinator
 description: >
-  Book Feishu meetings, query RSVP status, and start automatic RSVP monitoring
+  Book Feishu meetings and run deterministic follow-up negotiation workflows
   through the bundled plugin.
 version: 1.0.0
 author: Semantier
@@ -15,7 +15,7 @@ tags:
 
 # Feishu Bot Meeting Coordinator
 
-When a user books a Feishu meeting with `feishu_meeting_create`, the tool automatically starts RSVP monitoring after successful calendar creation and reports `result.rsvp_monitor`. Use `feishu_meeting_monitor_start` only to repair or manually start monitoring for an already-created meeting revision.
+When a user books a Feishu meeting with `feishu_meeting_create`, the tool creates the event and leaves RSVP follow-up orchestration to the durable negotiation follow-up flow.
 
 Infer meeting parameters from the conversation as much as possible before asking the user. For example, infer title, date, start time, duration/end time, timezone, online meeting format, organizer, and named participants when the user's request is unambiguous. Build an attendee list from invitees only and exclude the requester. If named attendees are not already Feishu `open_id` values or emails, call `feishu_contacts_search` with `attendees` or `queries` so each attendee is searched, then pass the resolved attendee `open_id` values into meeting creation. Ask the user only when a required value is missing or ambiguous, such as multiple matching contacts, unclear date, missing duration/end time, or uncertain attendee identity.
 

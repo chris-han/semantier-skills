@@ -99,12 +99,21 @@ def negotiation_task_metadata(
         record.get("followup_cron_status"),
         "not_created",
     )
+    metadata["followup_cron_job_id"] = _to_text(
+        record.get("followup_cron_job_id"),
+    )
     metadata["followup_cron_last_tick_at"] = _to_text(
         record.get("followup_cron_last_tick_at")
     )
     metadata["next_followup_at"] = _to_text(record.get("next_followup_at"))
     metadata["followup_cron_failure_count"] = _to_int(
         record.get("followup_cron_failure_count"), 0
+    )
+    metadata["terminal_authority"] = _to_text(record.get("terminal_authority"))
+    metadata["terminal_at"] = _to_text(record.get("terminal_at"))
+    metadata["terminal_reason"] = _to_text(record.get("terminal_reason"))
+    metadata["terminal_event_revision_id"] = _to_text(
+        record.get("terminal_event_revision_id"),
     )
     metadata["missing_required_attendee_names"] = missing_attendee_names
     metadata["missing_required_attendee_count"] = len(missing_attendee_names)

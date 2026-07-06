@@ -13,9 +13,6 @@ from .tools import (
     feishu_meeting_create,
     feishu_meeting_delivery_task_requeue,
     feishu_meeting_escalation_retry_tick,
-    feishu_meeting_monitor_start,
-    feishu_meeting_monitor_stop,
-    feishu_meeting_monitor_tick,
     feishu_meeting_negotiation_case_finalize,
     feishu_meeting_negotiation_kanban_worker_tick,
     feishu_meeting_negotiation_case_start,
@@ -25,6 +22,15 @@ from .tools import (
     feishu_meeting_negotiation_case_tick,
     feishu_meeting_negotiation_finalize,
     feishu_meeting_negotiation_next_round_prompts,
+    feishu_meeting_negotiation_resume,
+    feishu_meeting_rsvp_poll,
+    feishu_meeting_due_followups_list,
+    feishu_meeting_requester_decision_request,
+    feishu_meeting_requester_decision_record,
+    feishu_meeting_reply_ingest,
+    feishu_meeting_slot_normalize,
+    feishu_meeting_vote_record,
+    feishu_meeting_negotiation_cancel,
     feishu_meeting_followup_cron_ensure,
     feishu_meeting_followup_cron_stop,
     feishu_meeting_followup_cron_tick,
@@ -197,11 +203,6 @@ TOOL_SCHEMAS = {
                 ),
             },
             "requester_calendar_id": {"type": "string"},
-            "start_rsvp_monitor": {
-                "type": "boolean",
-                "default": True,
-                "description": "Whether to start automatic RSVP follow-up monitoring after creation.",
-            },
             "is_recurrent_meeting": {
                 "type": "boolean",
                 "description": "Unsupported in v0.1; true requests must be clarified or rejected.",
@@ -314,50 +315,6 @@ TOOL_SCHEMAS = {
         },
         required=("event_id", "calendar_id", "start_time", "end_time"),
     ),
-    "feishu_meeting_monitor_start": _object_schema(
-        {
-            "workspace_id": {
-                "type": "string",
-                "description": (
-                    "trusted gateway/runtime compatibility workspace id. "
-                    "In Feishu sessions, session metadata is authoritative."
-                ),
-            },
-            "platform": {"type": "string", "default": "feishu"},
-            "event_id": {"type": "string"},
-            "event_revision_id": {"type": "string"},
-            "calendar_id": {"type": "string"},
-            "meeting_title": {"type": "string"},
-            "meeting_start_time": {"type": "string"},
-            "meeting_end_time": {"type": "string"},
-            "timezone": {"type": "string", "default": "Asia/Shanghai"},
-            "attendees": {
-                "type": "array",
-                "items": {"type": "object", "additionalProperties": True},
-            },
-            "creator_delivery_binding": {
-                **_CREATOR_BINDING_SCHEMA,
-                "description": (
-                    "trusted gateway/runtime compatibility binding. "
-                    "Normal Feishu chat calls omit this and use session metadata."
-                ),
-            },
-        },
-        required=("event_id", "event_revision_id", "calendar_id"),
-    ),
-    "feishu_meeting_monitor_tick": _object_schema(
-        {
-            "monitor_id": {"type": "string"},
-            "workspace_id": {"type": "string"},
-        }
-    ),
-    "feishu_meeting_monitor_stop": _object_schema(
-        {
-            "monitor_id": {"type": "string"},
-            "workspace_id": {"type": "string"},
-            "reason": {"type": "string"},
-        }
-    ),
     "feishu_meeting_negotiation_case_start": _object_schema(
         {
             "monitor_id": {"type": "string"},
@@ -380,9 +337,101 @@ TOOL_SCHEMAS = {
         },
         required=("negotiation_id",),
     ),
+    "feishu_meeting_negotiation_resume": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+        },
+        required=("negotiation_id",),
+    ),
+    "feishu_meeting_rsvp_poll": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+        },
+        required=("negotiation_id",),
+    ),
+    "feishu_meeting_due_followups_list": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "followup_interval_minutes": {"type": "integer", "minimum": 1},
+            "max_followups": {"type": "integer", "minimum": 1},
+        },
+        required=("negotiation_id",),
+    ),
+    "feishu_meeting_requester_decision_request": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+        },
+        required=("negotiation_id",),
+    ),
+    "feishu_meeting_requester_decision_record": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "requested_by_user_id": {"type": "string"},
+            "action": {"type": "string"},
+            "slot_id": {"type": "string"},
+            "selected_slot_id": {"type": "string"},
+        },
+        required=("negotiation_id", "requested_by_user_id", "action"),
+    ),
+    "feishu_meeting_reply_ingest": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "participant_user_id": {"type": "string"},
+            "message_id": {"type": "string"},
+            "reply_text": {"type": "string"},
+            "callback_origin": {"type": "boolean"},
+            "callback_signature_valid": {"type": "boolean"},
+            "sender_user_id": {"type": "string"},
+            "attendee_user_id": {"type": "string"},
+            "provider_message_id": {"type": "string"},
+            "raw_text": {"type": "string"},
+            "raw": {"type": "object", "additionalProperties": True},
+        },
+        required=("negotiation_id", "participant_user_id", "message_id", "reply_text"),
+    ),
+    "feishu_meeting_slot_normalize": _object_schema(
+        {
+            "candidate_slots": _STRING_LIST_SCHEMA,
+            "candidate_slot": {"type": "string"},
+            "slots": _STRING_LIST_SCHEMA,
+            "slot": {"type": "string"},
+            "timezone": {"type": "string", "default": "Asia/Shanghai"},
+            "allow_past": {"type": "boolean", "default": False},
+        },
+        required=(),
+    ),
+    "feishu_meeting_vote_record": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "participant_user_id": {"type": "string"},
+            "message_id": {"type": "string"},
+            "vote": {"type": "string"},
+            "intent": {"type": "string"},
+            "slot_id": {"type": "string"},
+            "selected_slot_id": {"type": "string"},
+            "reply_text": {"type": "string"},
+            "provider_message_id": {"type": "string"},
+            "raw_text": {"type": "string"},
+        },
+        required=("negotiation_id", "participant_user_id", "message_id"),
+    ),
+    "feishu_meeting_negotiation_cancel": _object_schema(
+        {
+            "negotiation_id": {"type": "string"},
+            "operator_user_id": {"type": "string"},
+            "reason": {"type": "string"},
+        },
+        required=("negotiation_id",),
+    ),
     "feishu_meeting_followup_cron_stop": _object_schema(
         {
             "negotiation_id": {"type": "string"},
+            "expected_followup_cron_job_id": {
+                "type": "string",
+                "description": (
+                    "If provided, stop only when the negotiation currently tracks this follow-up cron job id."
+                ),
+            },
             "reason": {"type": "string", "default": "operator_stop"},
         },
         required=("negotiation_id",),
@@ -491,13 +540,19 @@ TOOL_SCHEMAS["feishu_contacts_search"]["anyOf"] = [
     {"required": ["attendees"]},
     {"required": ["participants"]},
 ]
+TOOL_SCHEMAS["feishu_meeting_slot_normalize"]["anyOf"] = [
+    {"required": ["candidate_slots"]},
+    {"required": ["candidate_slot"]},
+    {"required": ["slots"]},
+    {"required": ["slot"]},
+]
 
 
 def register(ctx) -> None:
     ctx.register_skill(
         name="feishu-bot-meeting-coordinator",
         path=Path(__file__).with_name("SKILL.md"),
-        description="Book Feishu meetings and start RSVP monitoring via the bundled plugin.",
+        description="Book Feishu meetings and run deterministic negotiation follow-up flows.",
     )
     ctx.register_tool(
         name="feishu_contacts_search",
@@ -594,27 +649,6 @@ def register(ctx) -> None:
         toolset="meeting-coordinator",
     )
     ctx.register_tool(
-        name="feishu_meeting_monitor_start",
-        handler=feishu_meeting_monitor_start,
-        description="Start or repair RSVP monitoring for a Feishu meeting revision.",
-        schema=_function_schema("feishu_meeting_monitor_start"),
-        toolset="meeting-coordinator",
-    )
-    ctx.register_tool(
-        name="feishu_meeting_monitor_tick",
-        handler=feishu_meeting_monitor_tick,
-        description="Run one RSVP monitor tick.",
-        schema=_function_schema("feishu_meeting_monitor_tick"),
-        toolset="meeting-coordinator",
-    )
-    ctx.register_tool(
-        name="feishu_meeting_monitor_stop",
-        handler=feishu_meeting_monitor_stop,
-        description="Stop one RSVP monitor and remove its cron job.",
-        schema=_function_schema("feishu_meeting_monitor_stop"),
-        toolset="meeting-coordinator",
-    )
-    ctx.register_tool(
         name="feishu_meeting_negotiation_case_start",
         handler=feishu_meeting_negotiation_case_start,
         description="Create or retrieve a durable meeting time negotiation case.",
@@ -633,6 +667,69 @@ def register(ctx) -> None:
         handler=feishu_meeting_followup_cron_ensure,
         description="Ensure a local no-agent follow-up cron job for a negotiation.",
         schema=_function_schema("feishu_meeting_followup_cron_ensure"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_negotiation_resume",
+        handler=feishu_meeting_negotiation_resume,
+        description="Load negotiation snapshot state for diagnostics and resumption.",
+        schema=_function_schema("feishu_meeting_negotiation_resume"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_rsvp_poll",
+        handler=feishu_meeting_rsvp_poll,
+        description="Pull and persist latest calendar RSVP status snapshots for a negotiation.",
+        schema=_function_schema("feishu_meeting_rsvp_poll"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_due_followups_list",
+        handler=feishu_meeting_due_followups_list,
+        description="List due negotiation follow-up targets under current runbook windows.",
+        schema=_function_schema("feishu_meeting_due_followups_list"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_requester_decision_request",
+        handler=feishu_meeting_requester_decision_request,
+        description="Return normalized requester decision options for a negotiation.",
+        schema=_function_schema("feishu_meeting_requester_decision_request"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_requester_decision_record",
+        handler=feishu_meeting_requester_decision_record,
+        description="Record a normalized requester-side decision into a negotiation.",
+        schema=_function_schema("feishu_meeting_requester_decision_record"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_reply_ingest",
+        handler=feishu_meeting_reply_ingest,
+        description="Ingest normalized attendee reply payload into a negotiation.",
+        schema=_function_schema("feishu_meeting_reply_ingest"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_slot_normalize",
+        handler=feishu_meeting_slot_normalize,
+        description="Normalize human time slots using deterministic temporal resolution.",
+        schema=_function_schema("feishu_meeting_slot_normalize"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_vote_record",
+        handler=feishu_meeting_vote_record,
+        description="Record a normalized attendee vote into a negotiation.",
+        schema=_function_schema("feishu_meeting_vote_record"),
+        toolset="meeting-coordinator",
+    )
+    ctx.register_tool(
+        name="feishu_meeting_negotiation_cancel",
+        handler=feishu_meeting_negotiation_cancel,
+        description="Cancel a negotiation using deterministic case-stop semantics.",
+        schema=_function_schema("feishu_meeting_negotiation_cancel"),
         toolset="meeting-coordinator",
     )
     ctx.register_tool(
@@ -700,8 +797,8 @@ def register(ctx) -> None:
     )
     ctx.register_cli_command(
         name="feishu-meeting-coordinator",
-        help="Inspect and operate Feishu meeting RSVP monitors",
+        help="Inspect and operate Feishu meeting coordination tasks",
         setup_fn=register_cli,
         handler_fn=command,
-        description="Operator CLI for Feishu meeting RSVP monitoring.",
+        description="Operator CLI for Feishu meeting coordination flows.",
     )
