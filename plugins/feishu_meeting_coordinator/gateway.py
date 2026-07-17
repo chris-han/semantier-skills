@@ -2892,21 +2892,21 @@ def finalize_negotiation_case(
                 "calendar_update_called": False,
                 "idempotent": True,
             }
-        stop_result = _stop_followup_cron_if_terminal(
-            negotiation_id=negotiation_id,
-            store=store,
-            cron=cron,
-            kanban=kanban,
-            owner_profile=owner,
-            reason="finalize_idempotent",
-            terminal_authority=owner,
-            terminal_reason="finalize_idempotent",
-            terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
-        )
-        if stop_result:
-            finalization["followup_cron_stopped"] = True
-            finalization["followup_cron_stop"] = stop_result
-        return _finalize_return(finalization)
+            stop_result = _stop_followup_cron_if_terminal(
+                negotiation_id=negotiation_id,
+                store=store,
+                cron=cron,
+                kanban=kanban,
+                owner_profile=owner,
+                reason="finalize_idempotent",
+                terminal_authority=owner,
+                terminal_reason="finalize_idempotent",
+                terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
+            )
+            if stop_result:
+                finalization["followup_cron_stopped"] = True
+                finalization["followup_cron_stop"] = stop_result
+            return _finalize_return(finalization)
 
         if attempt["status"] == "calendar_update_started":
             return _finalize_return({

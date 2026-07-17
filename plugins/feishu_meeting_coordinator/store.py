@@ -2586,24 +2586,24 @@ class MeetingCoordinatorStore:
             if row is None:
                 raise KeyError(negotiation_id)
             return {"ok": False, "reason": "state_conflict"}
-            record = dict(
-                conn.execute(
-                    "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
-                    (negotiation_id,),
-                ).fetchone()
-            )
-            self._record_negotiation_event(
-                conn,
-                negotiation_id=negotiation_id,
-                event_type="STATE_TRANSITIONED",
-                actor_type=(actor_id or "system").split(":", 1)[0]
-                if ":" in (actor_id or "system")
-                else "system",
-                actor_id=actor_id or "system",
-                prior_state=expected_state,
-                next_state=next_state,
-                payload={"patch": patch},
-            )
+        record = dict(
+            conn.execute(
+                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                (negotiation_id,),
+            ).fetchone()
+        )
+        self._record_negotiation_event(
+            conn,
+            negotiation_id=negotiation_id,
+            event_type="STATE_TRANSITIONED",
+            actor_type=(actor_id or "system").split(":", 1)[0]
+            if ":" in (actor_id or "system")
+            else "system",
+            actor_id=actor_id or "system",
+            prior_state=expected_state,
+            next_state=next_state,
+            payload={"patch": patch},
+        )
         return {"ok": True, "record": record}
 
     def expire_negotiation_if_due(
