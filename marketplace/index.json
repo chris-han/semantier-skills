@@ -30,21 +30,6 @@
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/auto_resume_screening",
       "repo": "https://github.com/chris-han/semantier-skills"
-    },
-    {
-      "id": "chris-han/semantier-skills/plugins/nihaixia",
-      "name": "nihaixia",
-      "version": "0.1.0",
-      "type": "plugin",
-      "path": "plugins/nihaixia",
-      "description": "Ni Haixia classical Chinese medicine knowledge skill for Semantier workspaces",
-      "author": "Semantier",
-      "category": "Reference",
-      "tags": ["nihaixia", "classical-chinese-medicine", "chinese-medicine", "knowledge"],
-      "source": "custom-marketplace",
-      "trust_level": "community",
-      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/nihaixia",
-      "repo": "https://github.com/chris-han/semantier-skills"
     }
   ]
 }
