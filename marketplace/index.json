@@ -30,6 +30,21 @@
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/auto_resume_screening",
       "repo": "https://github.com/chris-han/semantier-skills"
+    },
+    {
+      "id": "chris-han/semantier-skills/plugins/regulatory_source_monitor",
+      "name": "regulatory_source_monitor",
+      "version": "0.1.0",
+      "type": "plugin",
+      "path": "plugins/regulatory_source_monitor",
+      "description": "Governed legal regulatory source monitor orchestration",
+      "author": "Semantier",
+      "category": "Governance",
+      "tags": ["legal-corpus", "regulatory-monitor", "governance"],
+      "source": "custom-marketplace",
+      "trust_level": "community",
+      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/regulatory_source_monitor",
+      "repo": "https://github.com/chris-han/semantier-skills"
     }
   ]
 }

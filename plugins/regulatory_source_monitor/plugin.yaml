@@ -1,0 +1,9 @@
+name: regulatory_source_monitor
+version: 0.1.0
+description: Governed legal regulatory source monitoring orchestration.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
