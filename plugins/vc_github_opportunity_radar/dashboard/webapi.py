@@ -22,7 +22,7 @@ ROUTES = (
     ("GET", f"{BASE}/candidates/{{candidate_id}}/replay", "authenticated_tenant_member"),
 )
 ROUTE_POLICY_MAP = {(method, path): "authenticated" for method, path, _ in ROUTES}
-ROUTE_AUTHZ_CLASS_MAP = {(method, path): ("tenant-admin" if authorization == "governed_reviewer_capability" else "tenant-member") for method, path, authorization in ROUTES}
+ROUTE_AUTHZ_CLASS_MAP = {(method, path): "tenant-member" for method, path, _authorization in ROUTES}
 
 def _ctx(request: Request, method: str, path: str):
     from agents.route_policy import RouteAuthorizationClass
@@ -56,7 +56,15 @@ async def submit_candidate(request: Request): return plugin_api.submit_candidate
 @router.get(f"{BASE}/candidates/{{candidate_id}}")
 async def candidate_state(candidate_id: str, request: Request): return plugin_api.candidate_state(ctx=_ctx(request, "GET", f"{BASE}/candidates/{{candidate_id}}"), candidate_id=candidate_id)
 @router.post(f"{BASE}/candidates/{{candidate_id}}/review")
-async def review_candidate(candidate_id: str, request: Request): return plugin_api.review_candidate(ctx=_ctx(request, "POST", f"{BASE}/candidates/{{candidate_id}}/review"), candidate_id=candidate_id, payload=await _body(request))
+async def review_candidate(candidate_id: str, request: Request):
+    ctx = _ctx(request, "POST", f"{BASE}/candidates/{{candidate_id}}/review")
+    result = plugin_api.review_candidate(ctx=ctx, candidate_id=candidate_id, payload=await _body(request))
+    if not getattr(ctx, "can_change_settings", False):
+        result["warning"] = {
+            "code": "MVP_SAME_USER_REVIEW",
+            "message": "MVP mode: the submitting user also performed qualification review; independent admin review is recommended before production use.",
+        }
+    return result
 @router.post(f"{BASE}/candidates/{{candidate_id}}/actions")
 async def propose_action(candidate_id: str, request: Request): return plugin_api.propose_action(ctx=_ctx(request, "POST", f"{BASE}/candidates/{{candidate_id}}/actions"), candidate_id=candidate_id, payload=await _body(request))
 @router.get(f"{BASE}/candidates/{{candidate_id}}/replay")
