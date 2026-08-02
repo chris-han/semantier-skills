@@ -1,0 +1,12 @@
+{
+  "version": "vc_github_features_v1",
+  "null_policy": "preserve_unknown_and_suppress_composite_below_minimum_completeness",
+  "windows": ["30d", "90d", "180d"],
+  "features": {
+    "star_velocity": {"formula": "delta(stars) / window_days", "source": ["stars", "observed_at"]},
+    "star_acceleration": {"formula": "velocity(window_short) - velocity(window_long)", "source": ["stars", "observed_at"]},
+    "contributor_concentration": {"formula": "1 / distinct_commit_authors", "source": ["distinct_commit_authors"]},
+    "fork_conversion_proxy": {"formula": "forks / stars", "source": ["forks", "stars"]},
+    "maintenance_risk": {"formula": "1 when archived else 0", "source": ["archived", "pushed_at"]}
+  }
+}

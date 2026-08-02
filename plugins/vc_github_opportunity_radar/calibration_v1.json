@@ -1,0 +1,1 @@
+{"version":"vc_github_calibration_v1","purpose":"calibration evidence only; not investment performance proof","examples":[{"target_ref":"fixture/emerging-project","label":"positive_signal"},{"target_ref":"fixture/archived-project","label":"negative_signal"}]}

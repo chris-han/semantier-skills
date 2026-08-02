@@ -45,6 +45,21 @@
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/regulatory_source_monitor",
       "repo": "https://github.com/chris-han/semantier-skills"
+    },
+    {
+      "id": "chris-han/semantier-skills/plugins/vc_github_opportunity_radar",
+      "name": "vc_github_opportunity_radar",
+      "version": "0.1.0",
+      "type": "plugin",
+      "path": "plugins/vc_github_opportunity_radar",
+      "description": "Deterministic GitHub ecosystem signals for governed investment opportunity research",
+      "author": "Semantier",
+      "category": "Investment",
+      "tags": ["github", "venture-capital", "opportunity", "research"],
+      "source": "custom-marketplace",
+      "trust_level": "community",
+      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/vc_github_opportunity_radar",
+      "repo": "https://github.com/chris-han/semantier-skills"
     }
   ]
 }

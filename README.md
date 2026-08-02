@@ -8,6 +8,7 @@ Plugin authoring guidance lives in [docs/derived/semantier-marketplace-plugin-cr
 
 - `feishu_meeting_coordinator`
 - `auto_resume_screening`
+- `vc_github_opportunity_radar`
 
 ## Plugin Layout
 
@@ -37,6 +38,12 @@ The auto resume screening plugin is installable from this repository with:
 
 ```text
 chris-han/semantier-skills/plugins/auto_resume_screening
+```
+
+The GitHub opportunity radar plugin is installable from this repository with:
+
+```text
+chris-han/semantier-skills/plugins/vc_github_opportunity_radar
 ```
 
 `real_company_onboarding` is a built-in shared Semantier runtime plugin. Its
