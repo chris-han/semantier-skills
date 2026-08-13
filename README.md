@@ -69,3 +69,5 @@ https://github.com/chris-han/semantier-skills
 ```
 
 The workspace marketplace search treats that GitHub repo URL as a package catalog and searches both plugin packages and skill packages.
+
+`semantica_knowledge_graph`

@@ -1,0 +1,7 @@
+name: semantica_knowledge_graph
+version: 0.1.0
+description: Governed Semantica knowledge graph construction and review tools.
+author: Semantier
+kind: standalone
+platform_compatibility:
+  - api_server
