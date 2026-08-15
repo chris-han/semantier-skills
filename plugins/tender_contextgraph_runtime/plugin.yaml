@@ -1,0 +1,21 @@
+name: tender_contextgraph_runtime
+version: 0.1.0
+description: Read-only, candidate-pinned Tender Runtime Expert graph inspection.
+author: Semantier
+kind: standalone
+platforms: [linux, macos, windows]
+capabilities:
+  - graph.read
+  - graph.search
+  - graph.node
+  - graph.edge
+  - graph.path
+  - graph.evidence
+  - graph.review
+  - feedback.record
+negative_capabilities:
+  - candidate.mutate
+  - candidate.checkpoint
+  - authority.admit
+  - authority.promote
+  - governance.approve

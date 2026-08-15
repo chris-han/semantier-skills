@@ -1,0 +1,17 @@
+name: tender_contextgraph_builder
+version: 0.1.0
+description: Candidate-only fixed-DOCX tender graph Builder workflow.
+author: Semantier
+kind: standalone
+platforms: [linux, macos, windows]
+capabilities:
+  - extraction.request
+  - mapping.preview
+  - candidate.mutate
+  - candidate.build
+  - candidate.checkpoint
+negative_capabilities:
+  - authority.admit
+  - authority.promote
+  - governance.approve
+  - kgcqual.certify
