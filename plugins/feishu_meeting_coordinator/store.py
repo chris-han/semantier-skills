@@ -2584,7 +2584,9 @@ class MeetingCoordinatorStore:
                 (negotiation_id,),
             ).fetchone()
             if row is None:
+                conn.close()
                 raise KeyError(negotiation_id)
+            conn.close()
             return {"ok": False, "reason": "state_conflict"}
         record = dict(
             conn.execute(
@@ -2604,6 +2606,8 @@ class MeetingCoordinatorStore:
             next_state=next_state,
             payload={"patch": patch},
         )
+        conn.commit()
+        conn.close()
         return {"ok": True, "record": record}
 
     def expire_negotiation_if_due(
