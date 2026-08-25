@@ -1,6 +1,6 @@
 # Upstream skill map
 
-Pinned Semantica commit: `09c4b1b570778260d02b67d62f59d3b80e5a65d1`.
+Pinned Semantica commit: `029c6c4fc9779d7b65fd29a54573b1cd3e135844`.
 
 The P0 skills are adapted through the governed Semantier tool surface:
 
