@@ -1,0 +1,7 @@
+name: skill_review
+version: 0.1.0
+description: Review agent skills and AGENTS.md instruction design for precise activation, progressive disclosure, proportional boundaries, and completion clarity.
+author: Semantier
+kind: standalone
+platform_compatibility:
+  - api_server
