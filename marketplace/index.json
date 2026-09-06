@@ -10,12 +10,7 @@
       "description": "Feishu meeting RSVP monitoring and follow-up orchestration",
       "author": "Semantier",
       "category": "Productivity",
-      "tags": [
-        "feishu",
-        "calendar",
-        "meetings",
-        "contacts"
-      ],
+      "tags": ["feishu", "calendar", "meetings", "contacts"],
       "source": "custom-marketplace",
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/feishu_meeting_coordinator",
@@ -30,12 +25,7 @@
       "description": "Deterministic resume screening tools for Semantier workspaces",
       "author": "Semantier",
       "category": "Productivity",
-      "tags": [
-        "resume",
-        "hiring",
-        "screening",
-        "docx"
-      ],
+      "tags": ["resume", "hiring", "screening", "docx"],
       "source": "custom-marketplace",
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/auto_resume_screening",
@@ -50,11 +40,7 @@
       "description": "Governed legal regulatory source monitor orchestration",
       "author": "Semantier",
       "category": "Governance",
-      "tags": [
-        "legal-corpus",
-        "regulatory-monitor",
-        "governance"
-      ],
+      "tags": ["legal-corpus", "regulatory-monitor", "governance"],
       "source": "custom-marketplace",
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/regulatory_source_monitor",
@@ -69,12 +55,7 @@
       "description": "Deterministic GitHub ecosystem signals for governed investment opportunity research",
       "author": "Semantier",
       "category": "Investment",
-      "tags": [
-        "github",
-        "venture-capital",
-        "opportunity",
-        "research"
-      ],
+      "tags": ["github", "venture-capital", "opportunity", "research"],
       "source": "custom-marketplace",
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/vc_github_opportunity_radar",
@@ -89,14 +70,25 @@
       "description": "Governed Semantica knowledge graph construction and review tools",
       "author": "Semantier",
       "category": "Knowledge",
-      "tags": [
-        "semantica",
-        "knowledge-graph",
-        "governance"
-      ],
+      "tags": ["semantica", "knowledge-graph", "governance"],
       "source": "custom-marketplace",
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/semantica_knowledge_graph",
+      "repo": "https://github.com/chris-han/semantier-skills"
+    },
+    {
+      "id": "chris-han/semantier-skills/plugins/skill_review",
+      "name": "skill_review",
+      "version": "0.1.0",
+      "type": "plugin",
+      "path": "plugins/skill_review",
+      "description": "Review agent skills and AGENTS.md instruction design",
+      "author": "Semantier",
+      "category": "Developer Tools",
+      "tags": ["skills", "agents", "prompt-design", "progressive-disclosure"],
+      "source": "custom-marketplace",
+      "trust_level": "community",
+      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/skill_review",
       "repo": "https://github.com/chris-han/semantier-skills"
     }
   ]
