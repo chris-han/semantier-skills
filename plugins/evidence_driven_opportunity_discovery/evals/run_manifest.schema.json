@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EOD-Bench B2/B3 Run Manifest",
+  "type": "object",
+  "required": [
+    "benchmark_version",
+    "arm",
+    "repeat_index",
+    "case_set_hash",
+    "model_id",
+    "provider_id",
+    "model_config_hash",
+    "toolset_hash",
+    "tool_call_budget",
+    "input_token_budget",
+    "output_token_budget",
+    "prompt_hash",
+    "skill_hash",
+    "skill_enabled",
+    "instruction_hash"
+  ],
+  "properties": {
+    "benchmark_version": {"type": "string"},
+    "arm": {"enum": ["B2", "B3"]},
+    "repeat_index": {"type": "integer", "minimum": 0},
+    "case_set_hash": {"type": "string"},
+    "model_id": {"type": "string"},
+    "provider_id": {"type": "string"},
+    "model_config_hash": {"type": "string"},
+    "toolset_hash": {"type": "string"},
+    "tool_call_budget": {"type": "integer", "minimum": 0},
+    "input_token_budget": {"type": "integer", "minimum": 1},
+    "output_token_budget": {"type": "integer", "minimum": 1},
+    "prompt_hash": {"type": "string"},
+    "skill_hash": {"type": "string"},
+    "skill_enabled": {"type": "boolean"},
+    "instruction_hash": {"type": "string"},
+    "seed": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

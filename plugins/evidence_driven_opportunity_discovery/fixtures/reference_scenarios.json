@@ -1,0 +1,118 @@
+[
+  {
+    "scenario_id": "b2b-enterprise-signal",
+    "observation": {
+      "subject_ref": "company:acme-enterprise",
+      "source_ref": "public:hiring-and-announcement",
+      "source_type": "public_web",
+      "structured_payload": {
+        "signals": [
+          "opened Head of AI Governance role",
+          "announced enterprise agent deployment",
+          "role mentions auditability and policy controls"
+        ]
+      },
+      "freshness": {"score": 0.95}
+    },
+    "hypothesis": {
+      "subject_ref": "company:acme-enterprise",
+      "problem_or_state_change": "agent deployment is increasing the need for governed enterprise decision context",
+      "commercial_capability_ref": "semantier:governed-enterprise-decision-context",
+      "supporting_observation_refs": ["$observation"],
+      "uncertainties": [
+        {"question": "existing internal governance capability", "impact": 0.9, "resolution_cost": 0.3}
+      ]
+    },
+    "rank_features": {
+      "need_evidence_strength": 0.9,
+      "severity": 0.85,
+      "addressability": 0.9,
+      "expected_economic_value": 0.9,
+      "freshness": 0.95,
+      "source_quality": 0.85
+    },
+    "action": {
+      "action_type": "prepare_founder_conversation",
+      "justification": "multiple independent public signals support an enterprise governance need",
+      "reversibility": "HIGH",
+      "required_runtime_capabilities": []
+    },
+    "outcome": {"outcome_type": "qualified_conversation", "details": {"validated_problem": true}},
+    "assessment": {"disposition": "hypothesis_supported"}
+  },
+  {
+    "scenario_id": "local-property-visible-need",
+    "observation": {
+      "subject_ref": "property:125-main-st",
+      "source_ref": "public:property-image",
+      "source_type": "public_imagery",
+      "structured_payload": {"visible_condition": "roof deterioration", "capture_age_days": 45},
+      "freshness": {"score": 0.9}
+    },
+    "hypothesis": {
+      "subject_ref": "property:125-main-st",
+      "problem_or_state_change": "visible roof deterioration may create a roofing-service opportunity",
+      "commercial_capability_ref": "service:roof-repair",
+      "supporting_observation_refs": ["$observation"],
+      "uncertainties": [
+        {"question": "current condition unchanged since capture", "impact": 0.8, "resolution_cost": 0.4}
+      ]
+    },
+    "rank_features": {
+      "need_evidence_strength": 0.85,
+      "severity": 0.7,
+      "addressability": 0.95,
+      "expected_economic_value": 0.7,
+      "freshness": 0.9,
+      "source_quality": 0.8
+    },
+    "action": {
+      "action_type": "prepare_direct_mail_concept",
+      "justification": "fresh public imagery shows a directly addressable visible condition",
+      "reversibility": "HIGH",
+      "required_runtime_capabilities": []
+    },
+    "outcome": {"outcome_type": "stale_evidence", "details": {"condition_already_repaired": true}},
+    "assessment": {"disposition": "source_stale"}
+  },
+  {
+    "scenario_id": "digital-voice-of-customer",
+    "observation": {
+      "subject_ref": "segment:ops-leaders",
+      "source_ref": "public:discussion-corpus",
+      "source_type": "public_discussion",
+      "structured_payload": {
+        "themes": [
+          {"theme": "manual reconciliation", "frequency": 38, "severity": 0.8},
+          {"theme": "dashboard cosmetics", "frequency": 94, "severity": 0.2}
+        ]
+      },
+      "freshness": {"score": 0.85}
+    },
+    "hypothesis": {
+      "subject_ref": "segment:ops-leaders",
+      "problem_or_state_change": "manual reconciliation creates a higher-value addressable pain despite lower mention frequency",
+      "commercial_capability_ref": "product:workflow-automation",
+      "supporting_observation_refs": ["$observation"],
+      "uncertainties": [
+        {"question": "willingness to pay for reconciliation automation", "impact": 0.9, "resolution_cost": 0.5}
+      ]
+    },
+    "rank_features": {
+      "need_evidence_strength": 0.75,
+      "severity": 0.8,
+      "addressability": 0.8,
+      "expected_economic_value": 0.85,
+      "freshness": 0.85,
+      "frequency": 0.38
+    },
+    "action": {
+      "action_type": "prepare_small_experiment",
+      "justification": "severity and addressability outweigh raw mention frequency",
+      "reversibility": "HIGH",
+      "required_runtime_capabilities": []
+    },
+    "outcome": {"outcome_type": "purchase", "details": {"converted": true}},
+    "assessment": {"disposition": "hypothesis_supported"}
+  }
+]

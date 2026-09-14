@@ -1,0 +1,98 @@
+{
+  "plugin": "evidence_driven_opportunity_discovery",
+  "plugin_version": "0.1.0",
+  "benchmark": "EOD-Bench",
+  "benchmark_version": "1.0.0-draft",
+  "release_status": "IMPLEMENTATION_COMPLETE_VALIDATION_BLOCKED",
+  "generated_at": "2026-09-14",
+  "gates": {
+    "architecture_boundary": "PASS",
+    "five_object_kernel_mapping": "PASS",
+    "hermes_runtime_adapter": "PASS",
+    "codex_runtime_adapter": "PASS",
+    "runtime_inventory_callable_tools": "PASS",
+    "information_gain_investigation": "PASS",
+    "action_authorization_anti_bypass": "PASS",
+    "outcome_assessment_learning_lineage": "PASS",
+    "reference_scenarios": "PASS",
+    "benchmark_harness": "PASS",
+    "track_a_deterministic_baselines": "PASS",
+    "track_b_public_data_baselines": "PASS",
+    "track_c_public_data_baseline": "PASS",
+    "semantier_db_backed_password_auth_transport": "PASS",
+    "live_b2_b3_three_repeat_gate": "BLOCKED_EXTERNAL_PROVIDER_CONFIGURATION"
+  },
+  "tests": {
+    "command_scope": "EOD-related plugin, runtime inventory, benchmark, public-data and marketplace tests",
+    "passed": 52,
+    "failed": 0
+  },
+  "track_a": {
+    "gold_case_count": 8,
+    "case_set_sha256": "59398ed24ec5f31dfdb8b7c252ea48443b0d16d574d90701f9eb7aa01ca07aed",
+    "b0_random_seed0": {
+      "hypothesis_precision": 0.75,
+      "hypothesis_recall": 0.6,
+      "evidence_grounding_precision": 0.5,
+      "contradiction_recall": 0.0,
+      "unsupported_claim_rate": 0.0
+    },
+    "b1_keyword_heuristic": {
+      "hypothesis_precision": 0.75,
+      "hypothesis_recall": 0.6,
+      "evidence_grounding_precision": 0.5555555555555556,
+      "contradiction_recall": 0.0,
+      "unsupported_claim_rate": 0.0
+    }
+  },
+  "track_b": [
+    {
+      "dataset": "uci_bank_marketing",
+      "row_count": 45211,
+      "positive_count": 5289,
+      "precision_at_10pct": 0.22517142225171421,
+      "recall_at_10pct": 0.192474948005294,
+      "ndcg_at_10pct": 0.2344141367739603,
+      "raw_sha256": "e0bf5f5de5b846e2f18e9d90606637267d46dfa260e0f17bb12e605db5efbeb4"
+    },
+    {
+      "dataset": "uci_online_shoppers",
+      "row_count": 12330,
+      "positive_count": 1908,
+      "precision_at_10pct": 0.30251419302514193,
+      "recall_at_10pct": 0.19549266247379454,
+      "ndcg_at_10pct": 0.3018057341618612,
+      "raw_sha256": "2972e6184d3ad7beaaa831d9fc2b059dc3ee29df69d1ec593c466a5cd8485d14"
+    },
+    {
+      "dataset": "kdd_cup_2009_orange_small_appetency",
+      "row_count": 50000,
+      "positive_count": 890,
+      "precision_at_10pct": 0.0164,
+      "recall_at_10pct": 0.09213483146067415,
+      "ndcg_at_10pct": 0.06983441376777444,
+      "raw_sha256": "31ccb810bdbb71c16e079326443166dc3dfbf73cd358fc4a4ce7440fb1bc6040",
+      "labels_sha256": "edbfa40e7513804cf25c3f8b3c8f4a6cf5c77116cffc2f87ef770351250a963c"
+    }
+  ],
+  "track_c": {
+    "dataset": "criteo_uplift_unbiased_v2.1",
+    "sampled_rows": 200000,
+    "auuc": 133.57,
+    "qini": -352.43,
+    "policy_value_at_10pct": 0.0,
+    "raw_sha256": "2716e1bf0fd157a93b5bf86924d9088419dfbac2022c6cd90030220634f616dc",
+    "interpretation": "The deterministic feature-only score is intentionally a weak non-uplift baseline; negative Qini is evidence that propensity-like ordering must not be treated as incremental treatment value."
+  },
+  "live_validation": {
+    "required_matrix": "8 cases x 2 arms x 3 repeats = 48 case runs",
+    "semantier_application_auth": "PASS_DB_BACKED_USERNAME_PASSWORD",
+    "application_auth_path": "/auth/password/login -> session cookie -> /api/sessions/{session_id}/chat",
+    "model_provider_preflight": "BLOCKED_EXTERNAL_PROVIDER_CONFIGURATION",
+    "openai_codex": "logged out",
+    "alibaba": "logged out",
+    "rule": "Application authentication is proven independently. No live B2/B3 quality score is synthesized or substituted while a real inference provider is unavailable."
+  },
+  "resume_condition": "Use the DB-backed Semantier password-login gateway path for application identity. When a real inference provider becomes available, run the same frozen B2/B3 matrix and apply the release gate.",
+  "plan_status": "implementation_complete_validation_blocked"
+}

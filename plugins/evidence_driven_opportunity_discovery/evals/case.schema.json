@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EOD-Bench Controlled Evaluation Case",
+  "type": "object",
+  "required": [
+    "case_id",
+    "context_graph_ref",
+    "context_graph_hash",
+    "evidence_refs",
+    "ontology_ref",
+    "ontology_hash",
+    "world_time_pin",
+    "reasoning_version",
+    "task",
+    "gold"
+  ],
+  "properties": {
+    "case_id": {"type": "string", "minLength": 1},
+    "context_graph_ref": {"type": "string", "minLength": 1},
+    "context_graph_hash": {"type": "string", "minLength": 1},
+    "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "ontology_ref": {"type": "string", "minLength": 1},
+    "ontology_hash": {"type": "string", "minLength": 1},
+    "world_time_pin": {"type": "string", "minLength": 1},
+    "reasoning_version": {"type": "string", "minLength": 1},
+    "task": {"type": "string", "minLength": 1},
+    "gold": {"type": "object"}
+  },
+  "additionalProperties": false
+}

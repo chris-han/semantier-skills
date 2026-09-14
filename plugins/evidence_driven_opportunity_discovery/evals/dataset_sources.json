@@ -1,0 +1,34 @@
+{
+  "uci_bank_marketing": {
+    "canonical_source": "https://archive.ics.uci.edu/dataset/222/bank+marketing",
+    "download_url": "https://archive.ics.uci.edu/static/public/222/bank+marketing.zip",
+    "license": "CC BY 4.0",
+    "task": "ranking",
+    "target": "term_deposit_subscription"
+  },
+  "uci_online_shoppers": {
+    "canonical_source": "https://archive.ics.uci.edu/dataset/468/online+shoppers+purchasing+intention+dataset",
+    "download_url": "https://archive.ics.uci.edu/static/public/468/online+shoppers+purchasing+intention+dataset.zip",
+    "license": "CC BY 4.0",
+    "task": "ranking",
+    "target": "purchase_intention"
+  },
+  "kdd_cup_2009_orange_small": {
+    "canonical_source": "https://www.kdd.org/kdd-cup/view/kdd-cup-2009/Data",
+    "download_url": "https://kdd.org/cupfiles/orange_small_train.data.zip",
+    "labels": {
+      "appetency": "https://kdd.org/cupfiles/orange_small_train_appetency.labels",
+      "upselling": "https://kdd.org/cupfiles/orange_small_train_upselling.labels"
+    },
+    "license": "KDD Cup 2009 published data terms",
+    "task": "ranking"
+  },
+  "criteo_uplift_unbiased": {
+    "canonical_source": "https://ailab.criteo.com/criteo-uplift-prediction-dataset/",
+    "download_url": "https://go.criteo.net/criteo-research-uplift-v2.1.csv.gz",
+    "license": "CC BY-NC-SA 4.0",
+    "task": "uplift",
+    "rows_reported": 13979592,
+    "target": "conversion"
+  }
+}

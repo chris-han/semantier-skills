@@ -1,0 +1,11 @@
+{
+  "benchmark": "EOD-Bench",
+  "version": "1.0.0-draft",
+  "tracks": {
+    "A": {"name": "evidence_to_hypothesis", "source": "semantier_gold_cases"},
+    "B": {"name": "opportunity_ranking", "datasets": ["uci_bank_marketing", "kdd_cup_2009_orange", "uci_online_shoppers"]},
+    "C": {"name": "action_incremental_value", "datasets": ["criteo_uplift_prediction"]},
+    "D": {"name": "sequential_learning_replay", "source": "fixture_replay"}
+  },
+  "baselines": ["B0_random", "B1_simple", "B2_same_model_without_skill", "B3_same_model_with_eod_skill"]
+}

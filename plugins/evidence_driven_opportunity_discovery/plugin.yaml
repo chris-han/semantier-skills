@@ -1,0 +1,9 @@
+name: evidence_driven_opportunity_discovery
+version: "0.1.0"
+description: Evidence-grounded commercial opportunity discovery, ranking, action proposals, and learning.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows

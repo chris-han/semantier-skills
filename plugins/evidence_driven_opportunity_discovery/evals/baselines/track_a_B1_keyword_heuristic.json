@@ -1,0 +1,26 @@
+{
+  "benchmark": "EOD-Bench",
+  "benchmark_version": "1.0.0-draft",
+  "metrics": {
+    "contradiction_recall": 0.0,
+    "evidence_grounding_precision": 0.5555555555555556,
+    "hypothesis_precision": 0.75,
+    "hypothesis_recall": 0.6,
+    "unsupported_claim_rate": 0.0
+  },
+  "pins": {
+    "baseline": "B1_keyword_heuristic",
+    "model": "deterministic",
+    "prompt_or_skill_hash": "none",
+    "runtime": "python",
+    "tool_budget": "none"
+  },
+  "provenance": {
+    "case_count": 8,
+    "cases_path": "/home/chris/repo/semantier-runtime/semantier-skills/plugins/evidence_driven_opportunity_discovery/evals/track_a_gold/cases.json",
+    "cases_sha256": "59398ed24ec5f31dfdb8b7c252ea48443b0d16d574d90701f9eb7aa01ca07aed",
+    "predictions_path": null,
+    "predictions_sha256": "42ef80ff1eb7112a077094f8400624854a25b7d2078367c15b21d41874988599"
+  },
+  "track": "A"
+}

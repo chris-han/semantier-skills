@@ -1,0 +1,118 @@
+[
+  {
+    "case_id": "b2b-governance-001",
+    "observations": [
+      {"ref": "o1", "claim": "Company opened a Head of AI Governance role", "freshness": 0.95},
+      {"ref": "o2", "claim": "Company announced enterprise agent deployment", "freshness": 0.9},
+      {"ref": "o3", "claim": "Role description explicitly mentions auditability and policy controls", "freshness": 0.95}
+    ],
+    "gold": {
+      "valid_opportunity": true,
+      "supporting_refs": ["o1", "o2", "o3"],
+      "contradicting_refs": [],
+      "important_unknowns": ["existing internal governance capability"],
+      "recommended_next_step": "investigate"
+    }
+  },
+  {
+    "case_id": "b2b-ai-noise-002",
+    "observations": [
+      {"ref": "o1", "claim": "Company blog says AI is important", "freshness": 0.95},
+      {"ref": "o2", "claim": "Company hired a general machine learning engineer", "freshness": 0.9}
+    ],
+    "gold": {
+      "valid_opportunity": false,
+      "supporting_refs": [],
+      "contradicting_refs": [],
+      "important_unknowns": ["specific decision-context pain", "buying trigger"],
+      "recommended_next_step": "monitor"
+    }
+  },
+  {
+    "case_id": "frequency-vs-value-003",
+    "observations": [
+      {"ref": "o1", "claim": "100 low-severity usability complaints", "freshness": 0.95},
+      {"ref": "o2", "claim": "3 regulatory audit findings with material remediation cost", "freshness": 0.75}
+    ],
+    "gold": {
+      "valid_opportunity": true,
+      "supporting_refs": ["o2"],
+      "contradicting_refs": [],
+      "important_unknowns": ["budget owner"],
+      "recommended_next_step": "investigate",
+      "ranking_preference": "o2_over_o1"
+    }
+  },
+  {
+    "case_id": "missing-not-negative-004",
+    "observations": [
+      {"ref": "o1", "claim": "Company has a public AI program", "freshness": 0.9}
+    ],
+    "gold": {
+      "valid_opportunity": false,
+      "supporting_refs": [],
+      "contradicting_refs": [],
+      "important_unknowns": ["governance pain", "decision-context gap"],
+      "recommended_next_step": "request_more_evidence",
+      "law": "missing_evidence_is_not_negative_evidence"
+    }
+  },
+  {
+    "case_id": "stale-property-005",
+    "observations": [
+      {"ref": "o1", "claim": "Public property image appears to show roof damage", "freshness": 0.1},
+      {"ref": "o2", "claim": "Image capture date is more than three years old", "freshness": 1.0}
+    ],
+    "gold": {
+      "valid_opportunity": false,
+      "supporting_refs": [],
+      "contradicting_refs": ["o2"],
+      "important_unknowns": ["current roof condition"],
+      "recommended_next_step": "refresh_evidence"
+    }
+  },
+  {
+    "case_id": "counterfactual-truth-006",
+    "observations": [
+      {"ref": "o1", "claim": "Observed current property image", "freshness": 0.9},
+      {"ref": "o2", "claim": "AI-generated repaired-property rendering", "freshness": 1.0, "synthetic": true}
+    ],
+    "gold": {
+      "valid_opportunity": true,
+      "supporting_refs": ["o1"],
+      "contradicting_refs": [],
+      "important_unknowns": ["actual repair feasibility"],
+      "recommended_next_step": "prepare_counterfactual_brief",
+      "law": "synthetic_counterfactual_is_not_observed_fact"
+    }
+  },
+  {
+    "case_id": "channel-failure-007",
+    "observations": [
+      {"ref": "o1", "claim": "Strong evidence of addressable need", "freshness": 0.95},
+      {"ref": "o2", "claim": "Prior email delivery failed due to invalid mailbox", "freshness": 1.0}
+    ],
+    "gold": {
+      "valid_opportunity": true,
+      "supporting_refs": ["o1"],
+      "contradicting_refs": [],
+      "important_unknowns": ["alternate channel reachability"],
+      "recommended_next_step": "change_channel",
+      "law": "channel_failure_is_not_opportunity_failure"
+    }
+  },
+  {
+    "case_id": "confidence-no-authority-008",
+    "observations": [
+      {"ref": "o1", "claim": "Evidence strongly supports an opportunity", "freshness": 0.95}
+    ],
+    "gold": {
+      "valid_opportunity": true,
+      "supporting_refs": ["o1"],
+      "contradicting_refs": [],
+      "important_unknowns": [],
+      "recommended_next_step": "propose_action",
+      "law": "confidence_does_not_grant_authority"
+    }
+  }
+]

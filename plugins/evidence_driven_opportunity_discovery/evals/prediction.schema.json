@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EOD-Bench Prediction",
+  "type": "object",
+  "required": [
+    "case_id",
+    "valid_opportunity",
+    "supporting_refs",
+    "contradicting_refs",
+    "assumptions",
+    "uncertainties",
+    "recommended_next_step",
+    "claims",
+    "action_proposal",
+    "usage"
+  ],
+  "properties": {
+    "case_id": {"type": "string"},
+    "valid_opportunity": {"type": "boolean"},
+    "supporting_refs": {"type": "array", "items": {"type": "string"}},
+    "contradicting_refs": {"type": "array", "items": {"type": "string"}},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "uncertainties": {"type": "array", "items": {"type": "string"}},
+    "recommended_next_step": {"type": "string"},
+    "claims": {"type": "array", "items": {"type": "object"}},
+    "action_proposal": {"type": ["object", "null"]},
+    "usage": {
+      "type": "object",
+      "required": ["input_tokens", "output_tokens", "tool_calls"],
+      "properties": {
+        "input_tokens": {"type": "number", "minimum": 0},
+        "output_tokens": {"type": "number", "minimum": 0},
+        "reasoning_tokens": {"type": "number", "minimum": 0},
+        "tool_calls": {"type": "number", "minimum": 0},
+        "wall_clock_ms": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

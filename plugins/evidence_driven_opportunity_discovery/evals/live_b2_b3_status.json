@@ -1,0 +1,33 @@
+{
+  "status": "BLOCKED_EXTERNAL_PROVIDER_CONFIGURATION",
+  "semantier_auth_transport": {
+    "status": "PASS",
+    "identity_source": "ephemeral DB-backed username/password fixture",
+    "login_endpoint": "/auth/password/login",
+    "chat_endpoint": "/api/sessions/{session_id}/chat",
+    "authenticated_gateway_chat": true,
+    "note": "Application authentication no longer depends on Hermes OAuth. The smoke provisions a real auth.db user and uses the production password-login/session-cookie path."
+  },
+  "attempts": [
+    {
+      "runtime": "Hermes default",
+      "result": "No LLM provider configured."
+    },
+    {
+      "runtime": "Hermes provider=alibaba model=qwen3.6-flash",
+      "result": "Provider configured but no usable provider credential is available to the runtime process."
+    }
+  ],
+  "benchmark_effect": "Semantier DB-backed application authentication is proven. Strict B2/B3 live model scores are still not fabricated; controlled model-quality execution remains pending until a real inference provider is available.",
+  "completed_without_live_provider": [
+    "DB-backed Semantier username/password login and authenticated gateway chat",
+    "controlled B2/B3 pairing protocol",
+    "Hermes executor contract",
+    "Semantier gateway executor contract",
+    "three-repeat aggregation",
+    "release gate",
+    "Track A deterministic baselines",
+    "Track B public dataset baselines",
+    "Track C Criteo public dataset baseline"
+  ]
+}

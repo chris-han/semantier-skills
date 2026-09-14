@@ -1,0 +1,59 @@
+{
+  "track_b": [
+    {
+      "dataset": "uci_bank_marketing",
+      "feature_exclusions": [
+        "duration",
+        "y"
+      ],
+      "metrics": {
+        "k": 4521.0,
+        "ndcg_at_k": 0.2344141367739603,
+        "positive_count": 5289.0,
+        "precision_at_k": 0.22517142225171421,
+        "recall_at_k": 0.192474948005294,
+        "row_count": 45211.0
+      },
+      "raw_sha256": "e0bf5f5de5b846e2f18e9d90606637267d46dfa260e0f17bb12e605db5efbeb4"
+    },
+    {
+      "dataset": "uci_online_shoppers",
+      "feature_exclusions": [
+        "Revenue"
+      ],
+      "metrics": {
+        "k": 1233.0,
+        "ndcg_at_k": 0.3018057341618612,
+        "positive_count": 1908.0,
+        "precision_at_k": 0.30251419302514193,
+        "recall_at_k": 0.19549266247379454,
+        "row_count": 12330.0
+      },
+      "raw_sha256": "2972e6184d3ad7beaaa831d9fc2b059dc3ee29df69d1ec593c466a5cd8485d14"
+    },
+    {
+      "dataset": "kdd_cup_2009_orange_small_appetency",
+      "feature_count": 230,
+      "labels_sha256": "edbfa40e7513804cf25c3f8b3c8f4a6cf5c77116cffc2f87ef770351250a963c",
+      "metrics": {
+        "k": 5000.0,
+        "ndcg_at_k": 0.06983441376777444,
+        "positive_count": 890.0,
+        "precision_at_k": 0.0164,
+        "recall_at_k": 0.09213483146067415,
+        "row_count": 50000.0
+      },
+      "raw_sha256": "31ccb810bdbb71c16e079326443166dc3dfbf73cd358fc4a4ce7440fb1bc6040"
+    }
+  ],
+  "track_c": {
+    "dataset": "criteo_uplift_unbiased",
+    "metrics": {
+      "auuc": 133.57,
+      "policy_value_at_10pct": 0.0,
+      "qini": -352.43
+    },
+    "raw_sha256": "2716e1bf0fd157a93b5bf86924d9088419dfbac2022c6cd90030220634f616dc",
+    "sampled_rows": 200000
+  }
+}

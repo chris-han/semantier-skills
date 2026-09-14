@@ -81,6 +81,27 @@
       "repo": "https://github.com/chris-han/semantier-skills"
     },
     {
+      "id": "chris-han/semantier-skills/plugins/evidence_driven_opportunity_discovery",
+      "name": "evidence_driven_opportunity_discovery",
+      "version": "0.1.0",
+      "type": "plugin",
+      "path": "plugins/evidence_driven_opportunity_discovery",
+      "description": "Evidence-grounded commercial opportunity discovery, ranking, action proposals, and learning",
+      "author": "Semantier",
+      "category": "Sales",
+      "tags": [
+        "opportunity",
+        "evidence",
+        "commercial-intelligence",
+        "lead-generation",
+        "learning"
+      ],
+      "source": "custom-marketplace",
+      "trust_level": "community",
+      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/evidence_driven_opportunity_discovery",
+      "repo": "https://github.com/chris-han/semantier-skills"
+    },
+    {
       "id": "chris-han/semantier-skills/plugins/semantica_knowledge_graph",
       "name": "semantica_knowledge_graph",
       "version": "0.1.0",
