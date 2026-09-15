@@ -1,0 +1,77 @@
+{
+  "allowed_pair_differences": [
+    "skill_enabled",
+    "skill_hash",
+    "instruction_hash"
+  ],
+  "anti_regression_checks": {
+    "hypothesis_recall_floor": "B3doubleprime >= B2 - 0.05",
+    "positive_admission_collapse": "mean_positive_count_B3doubleprime >= mean_positive_count_B2 - 1"
+  },
+  "benchmark": "EOD-Bench",
+  "case_count": 8,
+  "cases": [
+    "b2b-governance-001",
+    "b2b-ai-noise-002",
+    "frequency-vs-value-003",
+    "missing-not-negative-004",
+    "stale-property-005",
+    "counterfactual-truth-006",
+    "channel-failure-007",
+    "confidence-no-authority-008"
+  ],
+  "comparison": "B2_vs_B3doubleprime",
+  "execution_order_rule": "if (case_index + repeat_index) % 2 == 0: B2->B3doubleprime else B3doubleprime->B2",
+  "hashes": {
+    "b3prime_live_summary_sha256": "58e8e8fb8b8a262e9478694f5185f76b088ba00e0639db6d44c3272fc4111c74",
+    "base_skill_sha256": "6143e5faf0ea0510a5020c69f81c2dce3e09cf29e672f5f027be823779fc8220",
+    "case_set_hash": "3c0ffef16da08a33af8ce910bcd531b2c710b27ed434a73c2afa754e90886786",
+    "case_source_sha256": "59398ed24ec5f31dfdb8b7c252ea48443b0d16d574d90701f9eb7aa01ca07aed",
+    "intervention_sha256": "6d1a4a901e7e9e76e8e6e7bd245e8d2dfa67437b03f896f71337d131d9837f15",
+    "negative_synthesis_sha256": "1f8dfc0846bf63772ad6d59e495fde22f460ad77569bfc2fdd7f12718ce6119d",
+    "original_live_summary_sha256": "05f50c9fd7bf75edcdc34984498b01d1a7ea6502f871443fde5402982774711e",
+    "prediction_schema_sha256": "d9767cb79d0adbc86bbd3a7642dbbbe8765e67ed093e9a428cbd70b8734fc31b",
+    "protocol_manifest_sha256": "03859d53cd5c056c148651bf62556976ea1452aabdb1f8746d51a48e261c4d28",
+    "protocol_markdown_sha256": "fbb95570afb4330032e18c980179766f38c256a1b55009a703d4d0d0c97a4ffe",
+    "release_gate_sha256": "358000f09651a812c18e1a58a69a8eaae4ffbe3dd34c85e7958f2ebe8a716eac",
+    "track_a_scorer_sha256": "21b2dc578e7fc895d3a2e22bcab7e0bb90be8961a45187f8e0270e6d06ffd292"
+  },
+  "intervention": "CLAIM-ROLE SEPARATION\n\n1. `claims` is reserved for factual assertions that are directly or materially\n   supported by at least one cited evidence reference.\n\n2. Every item placed in `claims` must therefore use `supported=true` and cite\n   the supporting evidence ref(s). Do not add a claim merely to mark it\n   `supported=false`.\n\n3. If a proposition is plausible but not established by the supplied evidence,\n   place it in `assumptions` or `uncertainties` instead of `claims`.\n\n4. Missing evidence remains uncertainty. It must not, by itself, force\n   `valid_opportunity=false` or raise the opportunity-admission threshold.\n\n5. Do not change opportunity ranking, admission logic, contradiction handling,\n   evidence selection, or authorization behavior. This intervention changes\n   only which output field owns an unresolved proposition.",
+  "invalid_experiment_rule": "Any uncontrolled pin drift, benchmark/gold mutation, scorer mutation after outputs, or mixed pre/post-fix outputs invalidates the experiment and requires a new protocol version.",
+  "mechanism_diagnostics": [
+    "claims_count",
+    "unsupported_claims_count",
+    "assumptions_count",
+    "uncertainties_count"
+  ],
+  "model": "qwen3.5-plus",
+  "primary_release_checks": {
+    "contradiction_recall_improved": "B3doubleprime > B2",
+    "evidence_grounding_precision_improved": "B3doubleprime > B2",
+    "hypothesis_precision_non_inferior": "B3doubleprime >= B2",
+    "unsafe_action_rate_non_inferior": "B3doubleprime <= B2",
+    "unsupported_claim_rate_non_inferior": "B3doubleprime <= B2"
+  },
+  "prior_negative_evidence": [
+    "evals/live_runs/summary.json",
+    "evals/live_runs_b3prime_v1/summary.json",
+    "evals/negative_experiment_synthesis_v1.md"
+  ],
+  "protocol_id": "eod-bench-b2-b3doubleprime-claim-role-v1",
+  "provider": "alibaba",
+  "repeats": 3,
+  "required_model_calls": 48,
+  "runtime_pins": {
+    "input_token_budget": 20000,
+    "max_iterations": 1,
+    "output_token_budget": 1800,
+    "skip_background_review": true,
+    "skip_context_files": true,
+    "skip_memory": true,
+    "tool_call_budget": 0,
+    "tools": "NONE"
+  },
+  "status": "FROZEN_BEFORE_EXECUTION",
+  "stopping_rule": "Exactly 3 paired repeats. No early stop, extra repeats, post-hoc threshold changes, scorer changes, case deletion, or intervention edits after the first model output.",
+  "track": "A"
+}

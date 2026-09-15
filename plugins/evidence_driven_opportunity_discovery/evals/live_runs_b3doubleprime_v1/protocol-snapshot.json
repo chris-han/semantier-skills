@@ -1,0 +1,10 @@
+{
+  "b3doubleprime_skill_hash": "257a8abe5272d767ba327898c645a7ec1fc3c463da0a4f87b2b96e9d5f610fe6",
+  "base_skill_hash": "6143e5faf0ea0510a5020c69f81c2dce3e09cf29e672f5f027be823779fc8220",
+  "case_set_hash": "3c0ffef16da08a33af8ce910bcd531b2c710b27ed434a73c2afa754e90886786",
+  "intervention_sha256": "6d1a4a901e7e9e76e8e6e7bd245e8d2dfa67437b03f896f71337d131d9837f15",
+  "model_config_hash": "dbcd4ffb50102546aa0fb0de3772d656692e9da481c990586f4591958ffafdf4",
+  "protocol_id": "eod-bench-b2-b3doubleprime-claim-role-v1",
+  "protocol_manifest_sha256": "03859d53cd5c056c148651bf62556976ea1452aabdb1f8746d51a48e261c4d28",
+  "toolset_hash": "8a04e1d7f108b3d810e5f97445d6d3594a38c2dac3282c64361040a5c098959b"
+}
