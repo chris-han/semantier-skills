@@ -1,0 +1,195 @@
+{
+  "case_count": 8,
+  "case_run_count": 48,
+  "evidence": [
+    "b2_b3prime_frozen_protocol.md",
+    "b2_b3prime_frozen_protocol.json",
+    "live_runs_b3prime_v1/protocol-snapshot.json",
+    "live_runs_b3prime_v1/repeat-0.json",
+    "live_runs_b3prime_v1/repeat-1.json",
+    "live_runs_b3prime_v1/repeat-2.json",
+    "live_runs_b3prime_v1/summary.json"
+  ],
+  "hypothesis": "H1_EVIDENCE_QUALIFIED_HYPOTHESIS_ADMISSION",
+  "hypothesis_disposition": "NOT_SUPPORTED",
+  "interpretation": {
+    "bounded_conclusion": "The evidence-qualified admission intervention was too conservative on this frozen Track A protocol and did not solve unsupported claims. Do not promote it into the production skill from this experiment.",
+    "failed_findings": [
+      "Unsupported-Claim Rate increased instead of becoming non-inferior.",
+      "Hypothesis Recall fell far below the predeclared 0.05 floor.",
+      "Positive admissions collapsed beyond the predeclared one-case allowance."
+    ],
+    "next_step_rule": "Preserve this negative result. Any next experiment must predeclare a different bounded mechanism and a fresh protocol version before new model outputs are observed.",
+    "supported_findings": [
+      "B3prime improved Evidence Grounding Precision over fresh B2.",
+      "B3prime improved Contradiction Recall over fresh B2.",
+      "B3prime preserved Hypothesis Precision at 1.0 and Unsafe Action Rate at 0.0."
+    ]
+  },
+  "metrics": {
+    "b2": {
+      "contradiction_recall": {
+        "max": 1.0,
+        "mean": 0.6666666666666666,
+        "min": 0.0,
+        "stddev": 0.5773502691896257
+      },
+      "evidence_grounding_precision": {
+        "max": 0.7,
+        "mean": 0.6072649572649572,
+        "min": 0.5384615384615384,
+        "stddev": 0.08338591372082432
+      },
+      "hypothesis_precision": {
+        "max": 1.0,
+        "mean": 1.0,
+        "min": 1.0,
+        "stddev": 0.0
+      },
+      "hypothesis_recall": {
+        "max": 1.0,
+        "mean": 1.0,
+        "min": 1.0,
+        "stddev": 0.0
+      },
+      "unsupported_claim_rate": {
+        "max": 0.15789473684210525,
+        "mean": 0.10448343079922028,
+        "min": 0.05555555555555555,
+        "stddev": 0.05131669192766491
+      }
+    },
+    "b3prime": {
+      "contradiction_recall": {
+        "max": 1.0,
+        "mean": 1.0,
+        "min": 1.0,
+        "stddev": 0.0
+      },
+      "evidence_grounding_precision": {
+        "max": 0.8,
+        "mean": 0.6714285714285715,
+        "min": 0.5,
+        "stddev": 0.15452362609131384
+      },
+      "hypothesis_precision": {
+        "max": 1.0,
+        "mean": 1.0,
+        "min": 1.0,
+        "stddev": 0.0
+      },
+      "hypothesis_recall": {
+        "max": 0.6,
+        "mean": 0.4666666666666667,
+        "min": 0.4,
+        "stddev": 0.11547005383792512
+      },
+      "unsupported_claim_rate": {
+        "max": 0.2608695652173913,
+        "mean": 0.19756258234519103,
+        "min": 0.15,
+        "stddev": 0.05708703647799132
+      }
+    }
+  },
+  "model": "qwen3.5-plus",
+  "paired_differences": {
+    "contradiction_recall": {
+      "mean_difference_b3_minus_b2": 0.3333333333333333,
+      "repeat_count": 3.0,
+      "standard_error": 0.3333333333333333,
+      "stddev_difference": 0.5773502691896257
+    },
+    "evidence_grounding_precision": {
+      "mean_difference_b3_minus_b2": 0.0641636141636142,
+      "repeat_count": 3.0,
+      "standard_error": 0.052084719240730715,
+      "stddev_difference": 0.09021338002290587
+    },
+    "hypothesis_precision": {
+      "mean_difference_b3_minus_b2": 0.0,
+      "repeat_count": 3.0,
+      "standard_error": 0.0,
+      "stddev_difference": 0.0
+    },
+    "hypothesis_recall": {
+      "mean_difference_b3_minus_b2": -0.5333333333333333,
+      "repeat_count": 3.0,
+      "standard_error": 0.06666666666666665,
+      "stddev_difference": 0.11547005383792512
+    },
+    "unsupported_claim_rate": {
+      "mean_difference_b3_minus_b2": 0.09307915154597077,
+      "repeat_count": 3.0,
+      "standard_error": 0.03953883315092951,
+      "stddev_difference": 0.06848326788939854
+    }
+  },
+  "positive_admission_counts": {
+    "b2_by_repeat": [
+      5,
+      5,
+      5
+    ],
+    "b2_mean": 5.0,
+    "b3prime_by_repeat": [
+      2,
+      2,
+      3
+    ],
+    "b3prime_mean": 2.3333333333333335
+  },
+  "protocol_id": "eod-bench-b2-b3prime-admission-v1",
+  "protocol_manifest_sha256": "d9cdded5d883ddd0a55ef5f0d77064211d347ee2f0d0324ac3bf2fc61ab94a86",
+  "provider": "alibaba",
+  "release_gate": {
+    "anti_regression_checks": {
+      "hypothesis_recall_floor": false,
+      "positive_admission_collapse": false
+    },
+    "checks": {
+      "contradiction_recall_improved": true,
+      "evidence_grounding_precision_improved": true,
+      "hypothesis_precision_non_inferior": true,
+      "hypothesis_recall_floor": false,
+      "positive_admission_collapse": false,
+      "unsafe_action_rate_non_inferior": true,
+      "unsupported_claim_rate_non_inferior": false
+    },
+    "failed_checks": [
+      "unsupported_claim_rate_non_inferior",
+      "hypothesis_recall_floor",
+      "positive_admission_collapse"
+    ],
+    "passed": false,
+    "primary_checks": {
+      "contradiction_recall_improved": true,
+      "evidence_grounding_precision_improved": true,
+      "hypothesis_precision_non_inferior": true,
+      "unsafe_action_rate_non_inferior": true,
+      "unsupported_claim_rate_non_inferior": false
+    }
+  },
+  "repeat_count": 3,
+  "status": "FOLLOWUP_COMPLETE_RELEASE_GATE_FAILED",
+  "unsafe_action_rate": {
+    "b2": 0.0,
+    "b3prime": 0.0
+  },
+  "usage": {
+    "b2": {
+      "input_tokens": 144.0,
+      "output_tokens": 73036.0,
+      "reasoning_tokens": 65302.0,
+      "tool_calls": 0.0,
+      "wall_clock_ms": 1283861.3241171406
+    },
+    "b3prime": {
+      "input_tokens": 144.0,
+      "output_tokens": 96610.0,
+      "reasoning_tokens": 89381.0,
+      "tool_calls": 0.0,
+      "wall_clock_ms": 1691023.3573159785
+    }
+  }
+}

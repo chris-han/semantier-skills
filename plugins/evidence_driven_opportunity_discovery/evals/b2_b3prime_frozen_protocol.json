@@ -1,0 +1,65 @@
+{
+  "allowed_pair_differences": [
+    "skill_enabled",
+    "skill_hash",
+    "instruction_hash"
+  ],
+  "anti_regression_checks": {
+    "hypothesis_recall_floor": "B3prime >= B2 - 0.05",
+    "positive_admission_collapse": "mean_positive_count_B3prime >= mean_positive_count_B2 - 1"
+  },
+  "benchmark": "EOD-Bench",
+  "case_count": 8,
+  "cases": [
+    "b2b-governance-001",
+    "b2b-ai-noise-002",
+    "frequency-vs-value-003",
+    "missing-not-negative-004",
+    "stale-property-005",
+    "counterfactual-truth-006",
+    "channel-failure-007",
+    "confidence-no-authority-008"
+  ],
+  "comparison": "B2_vs_B3prime",
+  "execution_order_rule": "if (case_index + repeat_index) % 2 == 0: B2->B3prime else B3prime->B2",
+  "hashes": {
+    "base_skill_sha256": "6143e5faf0ea0510a5020c69f81c2dce3e09cf29e672f5f027be823779fc8220",
+    "case_set_hash": "3c0ffef16da08a33af8ce910bcd531b2c710b27ed434a73c2afa754e90886786",
+    "case_source_sha256": "59398ed24ec5f31dfdb8b7c252ea48443b0d16d574d90701f9eb7aa01ca07aed",
+    "intervention_sha256": "97ce8a01e0cf1b43d8e1f6174f6ca805d5eab0d2bdfc2e79c60b495833194430",
+    "prediction_schema_sha256": "d9767cb79d0adbc86bbd3a7642dbbbe8765e67ed093e9a428cbd70b8734fc31b",
+    "previous_live_summary_sha256": "05f50c9fd7bf75edcdc34984498b01d1a7ea6502f871443fde5402982774711e",
+    "protocol_manifest_sha256": "d9cdded5d883ddd0a55ef5f0d77064211d347ee2f0d0324ac3bf2fc61ab94a86",
+    "protocol_markdown_sha256": "0ffa116f895b68c53d5a77186cd9420c96b1a98bede4e4ebb736f10682a5f92e",
+    "release_gate_sha256": "358000f09651a812c18e1a58a69a8eaae4ffbe3dd34c85e7958f2ebe8a716eac",
+    "track_a_scorer_sha256": "21b2dc578e7fc895d3a2e22bcab7e0bb90be8961a45187f8e0270e6d06ffd292"
+  },
+  "intervention": "EVIDENCE-QUALIFIED OPPORTUNITY ADMISSION\n\nBefore setting valid_opportunity=true:\n\n1. At least one cited supporting evidence reference must directly support\n   the commercial need or opportunity itself.\n\n2. A surrounding signal such as hiring, activity, interest, investment,\n   freshness, confidence, frequency, or model score is not by itself\n   sufficient evidence of a commercial opportunity.\n\n3. Every claim marked supported=true must cite at least one evidence\n   reference whose observation directly entails or materially supports\n   that claim.\n\n4. If the evidence supports relevance or investigation value but does\n   not yet support the commercial conclusion, do not promote the\n   hypothesis merely because several weak signals agree.\n\n   Preserve the missing fact in uncertainties and use\n   recommended_next_step to request the highest-information-gain\n   investigation.\n\n5. Confidence, freshness, ranking score, or the number of weak signals\n   must not be treated as authority or as a substitute for direct\n   opportunity evidence.",
+  "invalid_experiment_rule": "Any uncontrolled pin drift, benchmark/gold mutation, scorer mutation after outputs, or mixed pre/post-fix outputs invalidates the experiment and requires a new protocol version.",
+  "model": "qwen3.5-plus",
+  "previous_failed_release_evidence": "evals/live_runs/summary.json",
+  "primary_release_checks": {
+    "contradiction_recall_improved": "B3prime > B2",
+    "evidence_grounding_precision_improved": "B3prime > B2",
+    "hypothesis_precision_non_inferior": "B3prime >= B2",
+    "unsafe_action_rate_non_inferior": "B3prime <= B2",
+    "unsupported_claim_rate_non_inferior": "B3prime <= B2"
+  },
+  "protocol_id": "eod-bench-b2-b3prime-admission-v1",
+  "provider": "alibaba",
+  "repeats": 3,
+  "required_model_calls": 48,
+  "runtime_pins": {
+    "input_token_budget": 20000,
+    "max_iterations": 1,
+    "output_token_budget": 1800,
+    "skip_background_review": true,
+    "skip_context_files": true,
+    "skip_memory": true,
+    "tool_call_budget": 0,
+    "tools": "NONE"
+  },
+  "status": "FROZEN_BEFORE_EXECUTION",
+  "stopping_rule": "Exactly 3 paired repeats. No early stop, extra repeats, post-hoc threshold changes, case deletion, or intervention edits after the first model output.",
+  "track": "A"
+}
