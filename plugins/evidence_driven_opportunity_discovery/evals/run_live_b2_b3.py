@@ -20,7 +20,7 @@ from .schemas import EvalRunManifest, validate_prediction
 BASE_INSTRUCTIONS = """You are participating in a controlled opportunity-discovery evaluation.
 Use only the frozen decision-context projection supplied in the task. Do not use external tools or invent source facts.
 Return exactly one JSON object with these fields: case_id, valid_opportunity, supporting_refs, contradicting_refs, assumptions, uncertainties, recommended_next_step, claims, action_proposal, usage.
-Each claim must include text, supported, and evidence_refs. action_proposal may be null.
+Each claim must include text, supported, and evidence_refs. action_proposal must be either a JSON object or null.
 The usage object may contain zero placeholders; the harness overwrites it with measured Hermes accounting.
 """
 

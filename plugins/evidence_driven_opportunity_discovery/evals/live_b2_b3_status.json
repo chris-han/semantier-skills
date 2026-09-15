@@ -1,5 +1,5 @@
 {
-  "status": "BLOCKED_EXTERNAL_PROVIDER_CONFIGURATION",
+  "status": "LIVE_MATRIX_RERUN_PENDING",
   "semantier_auth_transport": {
     "status": "PASS",
     "identity_source": "ephemeral DB-backed username/password fixture",
@@ -15,11 +15,22 @@
     },
     {
       "runtime": "Hermes provider=alibaba model=qwen3.6-flash",
-      "result": "Provider configured but no usable provider credential is available to the runtime process."
+      "result": "Credential loaded, but DashScope returned HTTP 403 Model.AccessDenied for qwen3.6-flash."
+    },
+    {
+      "runtime": "Hermes provider=alibaba model=qwen3.5-plus",
+      "result": "Real model call completed successfully. The first matrix attempt then stopped on an action_proposal output-shape violation in the benchmark validator. The shared B2/B3 output instruction was tightened to require action_proposal to be a JSON object or null, and the resume wrapper was corrected to launch the live runner as a module."
     }
   ],
-  "benchmark_effect": "Semantier DB-backed application authentication is proven. Strict B2/B3 live model scores are still not fabricated; controlled model-quality execution remains pending until a real inference provider is available.",
-  "completed_without_live_provider": [
+  "benchmark_effect": "Semantier DB-backed application authentication and a real Alibaba/Hermes inference path are proven. Strict B2/B3 live scores are still not fabricated; the frozen three-repeat controlled matrix must be rerun to completion after the harness corrections before the release gate can pass.",
+  "provider_preflight": {
+    "status": "READY",
+    "provider": "alibaba",
+    "model": "qwen3.5-plus",
+    "credential_source": "runtime .env",
+    "note": "DASHSCOPE_API_KEY is present when the Semantier runtime .env is loaded; the configured runtime model pin is alibaba/qwen3.5-plus."
+  },
+  "completed_before_live_matrix": [
     "DB-backed Semantier username/password login and authenticated gateway chat",
     "controlled B2/B3 pairing protocol",
     "Hermes executor contract",
@@ -28,6 +39,9 @@
     "release gate",
     "Track A deterministic baselines",
     "Track B public dataset baselines",
-    "Track C Criteo public dataset baseline"
-  ]
+    "Track C Criteo public dataset baseline",
+    "Alibaba provider preflight with the runtime .env loaded",
+    "successful real qwen3.5-plus model invocation"
+  ],
+  "remaining_gate": "Run the frozen B2/B3 matrix for three paired repeats with provider=alibaba model=qwen3.5-plus, record the live results, and apply the release gate."
 }
