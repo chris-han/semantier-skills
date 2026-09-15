@@ -11,7 +11,7 @@ from typing import Any
 from .adjacent_runner import execute_adjacent
 from .hermes_executor import HermesEvalExecutor
 from .pairing import ControlledRunPins, case_disagreements, validate_b2_b3_pair
-from .release_report import evaluate_track_a_release
+from .release_report import evaluate_track_a_release, unsafe_action_rate
 from .repeats import aggregate_metric_repeats, aggregate_usage, paired_mean_difference
 from .runner import evaluate_track_a
 from .schemas import EvalRunManifest, validate_prediction
@@ -148,10 +148,52 @@ def _manifest(*, arm: str, repeat: int, case_set_hash: str, provider: str, model
 def _prediction_report(cases: list[dict[str, Any]], predictions: list[dict[str, Any]]) -> dict[str, Any]:
     gold_by_id = {case["case_id"]: case["gold"] for case in cases}
     gold_cases = [{"case_id": case_id, "gold": gold} for case_id, gold in gold_by_id.items()]
-    # evaluate_track_a expects files, so reproduce its pure metric contract here by
-    # importing the helper rather than writing transient benchmark inputs.
     from .runner import evaluate_track_a as _eval
     return _eval(gold_cases, predictions)
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def _aggregate_release(all_runs: list[dict[str, Any]]) -> dict[str, Any]:
+    b2_reports = [{"metrics": run["b2_metrics"]} for run in all_runs]
+    b3_reports = [{"metrics": run["b3_metrics"]} for run in all_runs]
+    b2_aggregate = aggregate_metric_repeats(b2_reports)
+    b3_aggregate = aggregate_metric_repeats(b3_reports)
+    b2_mean = {name: summary["mean"] for name, summary in b2_aggregate.items()}
+    b3_mean = {name: summary["mean"] for name, summary in b3_aggregate.items()}
+    b2_predictions = [prediction for run in all_runs for prediction in run["b2"]["predictions"]]
+    b3_predictions = [prediction for run in all_runs for prediction in run["b3"]["predictions"]]
+    unsafe_b2 = unsafe_action_rate(b2_predictions)
+    unsafe_b3 = unsafe_action_rate(b3_predictions)
+    gate = evaluate_track_a_release(
+        b2=b2_mean,
+        b3=b3_mean,
+        unsafe_b2=unsafe_b2,
+        unsafe_b3=unsafe_b3,
+    )
+    paired_differences = {
+        name: paired_mean_difference(
+            [float(report["metrics"][name]) for report in b2_reports],
+            [float(report["metrics"][name]) for report in b3_reports],
+        )
+        for name in sorted(b2_mean)
+    }
+    return {
+        "release_gate": {
+            "passed": gate.passed,
+            "checks": gate.checks,
+            "failed_checks": list(gate.notes),
+        },
+        "metrics": {"b2": b2_aggregate, "b3": b3_aggregate},
+        "paired_differences": paired_differences,
+        "unsafe_action_rate": {"b2": unsafe_b2, "b3": unsafe_b3},
+        "usage": {
+            "b2": aggregate_usage(b2_predictions),
+            "b3": aggregate_usage(b3_predictions),
+        },
+    }
 
 
 def main() -> None:
@@ -161,6 +203,18 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--max-iterations", type=int, default=1)
     parser.add_argument("--max-tokens", type=int, default=1800)
+    parser.add_argument(
+        "--max-new-cases",
+        type=int,
+        default=0,
+        help="Maximum new B2/B3 case pairs to execute in this invocation; 0 means unlimited.",
+    )
+    parser.add_argument(
+        "--parallel-pairs",
+        type=int,
+        default=1,
+        help="Number of case pairs to execute concurrently; each pair still runs its B2/B3 arms serially in the frozen order.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
@@ -197,7 +251,9 @@ def main() -> None:
     b3_executor = HermesEvalExecutor(runner=runtime_runner, arm="B3", base_instructions=BASE_INSTRUCTIONS, eod_skill_text=skill_text)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    all_runs = []
+    all_runs: list[dict[str, Any]] = []
+    remaining_budget = None if args.max_new_cases <= 0 else args.max_new_cases
+
     for repeat in range(args.repeats):
         b2_manifest = _manifest(
             arm="B2", repeat=repeat, case_set_hash=case_set_hash, provider=args.provider, model=args.model,
@@ -215,6 +271,14 @@ def main() -> None:
             "basis": "shared_manifest_builder",
             "allowed_differences": ["instruction_hash", "skill_enabled", "skill_hash"],
         }
+        output = args.output_dir / f"repeat-{repeat}.json"
+        progress = args.output_dir / f"repeat-{repeat}.progress.json"
+        if output.exists():
+            all_runs.append(json.loads(output.read_text()))
+            continue
+
+        existing = json.loads(progress.read_text()) if progress.exists() else None
+        before = len(((existing or {}).get("execution_order") or []))
         paired = execute_adjacent(
             executor_b2=b2_executor,
             executor_b3=b3_executor,
@@ -222,16 +286,54 @@ def main() -> None:
             manifest_b2=b2_manifest,
             manifest_b3=b3_manifest,
             repeat_index=repeat,
+            existing=existing,
+            max_new_cases=remaining_budget,
+            parallel_pairs=args.parallel_pairs,
+            checkpoint=lambda value, path=progress: _write_json(path, value),
         )
+        completed = len(paired["execution_order"])
+        if remaining_budget is not None:
+            remaining_budget -= completed - before
+
+        if completed < len(cases):
+            partial = {
+                "status": "LIVE_MATRIX_PARTIAL",
+                "provider": args.provider,
+                "model": args.model,
+                "repeat_count": args.repeats,
+                "current_repeat": repeat,
+                "completed_case_pairs_in_repeat": completed,
+                "case_pairs_per_repeat": len(cases),
+                "remaining_case_pairs_total": (len(cases) - completed) + (args.repeats - repeat - 1) * len(cases),
+            }
+            _write_json(args.output_dir / "summary.json", partial)
+            print(json.dumps(partial, indent=2, sort_keys=True))
+            return
+
         b2_predictions = paired["b2"]["predictions"]
         b3_predictions = paired["b3"]["predictions"]
         paired["pair_validation"] = pair_validation
         paired["b2_metrics"] = _prediction_report(cases, b2_predictions)
         paired["b3_metrics"] = _prediction_report(cases, b3_predictions)
         paired["disagreements"] = case_disagreements(b2_predictions, b3_predictions)
-        output = args.output_dir / f"repeat-{repeat}.json"
-        output.write_text(json.dumps(paired, indent=2, sort_keys=True) + "\n")
+        _write_json(output, paired)
+        progress.unlink(missing_ok=True)
         all_runs.append(paired)
+
+        if remaining_budget == 0 and repeat + 1 < args.repeats:
+            partial = {
+                "status": "LIVE_MATRIX_PARTIAL",
+                "provider": args.provider,
+                "model": args.model,
+                "repeat_count": args.repeats,
+                "current_repeat": repeat + 1,
+                "completed_case_pairs_in_repeat": 0,
+                "case_pairs_per_repeat": len(cases),
+                "remaining_case_pairs_total": (args.repeats - repeat - 1) * len(cases),
+            }
+            _write_json(args.output_dir / "summary.json", partial)
+            print(json.dumps(partial, indent=2, sort_keys=True))
+            return
 
     summary = {
         "status": "LIVE_MATRIX_COMPLETE",
@@ -244,8 +346,9 @@ def main() -> None:
         "model_config_hash": model_config_hash,
         "toolset_hash": toolset_hash,
         "runs": [f"repeat-{index}.json" for index in range(args.repeats)],
+        **_aggregate_release(all_runs),
     }
-    (args.output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    _write_json(args.output_dir / "summary.json", summary)
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 

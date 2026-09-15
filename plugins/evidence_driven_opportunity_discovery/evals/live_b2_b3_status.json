@@ -1,5 +1,5 @@
 {
-  "status": "LIVE_MATRIX_RERUN_PENDING",
+  "status": "LIVE_MATRIX_COMPLETE_RELEASE_GATE_FAILED",
   "semantier_auth_transport": {
     "status": "PASS",
     "identity_source": "ephemeral DB-backed username/password fixture",
@@ -22,13 +22,13 @@
       "result": "Real model call completed successfully. The first matrix attempt then stopped on an action_proposal output-shape violation in the benchmark validator. The shared B2/B3 output instruction was tightened to require action_proposal to be a JSON object or null, and the resume wrapper was corrected to launch the live runner as a module."
     }
   ],
-  "benchmark_effect": "Semantier DB-backed application authentication and a real Alibaba/Hermes inference path are proven. Strict B2/B3 live scores are still not fabricated; the frozen three-repeat controlled matrix must be rerun to completion after the harness corrections before the release gate can pass.",
+  "benchmark_effect": "The frozen B2/B3 live matrix completed all 48 case runs across three paired repeats. The mechanical release gate failed two checks: unsupported-claim rate non-inferiority and hypothesis precision non-inferiority. No scores were synthesized or substituted.",
   "provider_preflight": {
     "status": "READY",
     "provider": "alibaba",
     "model": "qwen3.5-plus",
     "credential_source": "runtime .env",
-    "note": "DASHSCOPE_API_KEY is present when the Semantier runtime .env is loaded; the configured runtime model pin is alibaba/qwen3.5-plus."
+    "note": "Real Hermes inference completed successfully under the runtime provider/model pin."
   },
   "completed_before_live_matrix": [
     "DB-backed Semantier username/password login and authenticated gateway chat",
@@ -43,5 +43,40 @@
     "Alibaba provider preflight with the runtime .env loaded",
     "successful real qwen3.5-plus model invocation"
   ],
-  "remaining_gate": "Run the frozen B2/B3 matrix for three paired repeats with provider=alibaba model=qwen3.5-plus, record the live results, and apply the release gate."
+  "remaining_gate": "Release gate failed. Do not mark implemented. Review the two failed quality criteria and decide on a new bounded improvement experiment before any re-run; do not tune against these cases merely to pass the benchmark.",
+  "live_matrix": {
+    "status": "LIVE_MATRIX_COMPLETE",
+    "provider": "alibaba",
+    "model": "qwen3.5-plus",
+    "repeat_count": 3,
+    "case_count": 8,
+    "case_run_count": 48,
+    "case_set_hash": "3c0ffef16da08a33af8ce910bcd531b2c710b27ed434a73c2afa754e90886786",
+    "model_config_hash": "dbcd4ffb50102546aa0fb0de3772d656692e9da481c990586f4591958ffafdf4",
+    "toolset_hash": "8a04e1d7f108b3d810e5f97445d6d3594a38c2dac3282c64361040a5c098959b",
+    "unsafe_action_rate": {
+      "b2": 0.0,
+      "b3": 0.0
+    },
+    "release_gate": {
+      "checks": {
+        "contradiction_recall_improved": true,
+        "evidence_grounding_precision_improved": true,
+        "hypothesis_precision_non_inferior": false,
+        "unsafe_action_rate_non_inferior": true,
+        "unsupported_claim_rate_non_inferior": false
+      },
+      "failed_checks": [
+        "unsupported_claim_rate_non_inferior",
+        "hypothesis_precision_non_inferior"
+      ],
+      "passed": false
+    },
+    "summary_path": "evals/live_runs/summary.json",
+    "repeat_paths": [
+      "evals/live_runs/repeat-0.json",
+      "evals/live_runs/repeat-1.json",
+      "evals/live_runs/repeat-2.json"
+    ]
+  }
 }

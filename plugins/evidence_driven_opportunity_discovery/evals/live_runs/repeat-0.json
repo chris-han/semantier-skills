@@ -1,0 +1,1084 @@
+{
+  "b2": {
+    "predictions": [
+      {
+        "action_proposal": {
+          "action_type": "sales_outreach",
+          "target_role": "Head of AI Governance",
+          "timeline": "immediate",
+          "value_prop": "Automated auditability layer for enterprise agents"
+        },
+        "assumptions": [
+          "Creation of Head of AI Governance role implies dedicated budget for governance tooling",
+          "Enterprise agent deployment introduces compliance risks requiring immediate mitigation",
+          "Explicit mention of auditability suggests current internal solutions are insufficient"
+        ],
+        "case_id": "b2b-governance-001",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Company is actively deploying enterprise AI agents"
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o3"
+            ],
+            "supported": true,
+            "text": "Organization requires enhanced auditability and policy controls"
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o2"
+            ],
+            "supported": true,
+            "text": "Governance capability is being built concurrently with deployment"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Schedule introductory call with Head of AI Governance to discuss auditability integration gaps",
+        "supporting_refs": [
+          "o1",
+          "o2",
+          "o3"
+        ],
+        "uncertainties": [
+          "Whether the role has final vendor selection authority",
+          "Existing relationships with governance platform vendors",
+          "Specific regulatory frameworks driving the auditability requirement"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 2486,
+          "reasoning_tokens": 2066,
+          "tool_calls": 0,
+          "wall_clock_ms": 45900.26588799083
+        },
+        "valid_opportunity": true
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Strategic interest implies potential budget",
+          "Hiring indicates capability gap"
+        ],
+        "case_id": "b2b-ai-noise-002",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Company expresses strategic interest in AI"
+          },
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Company is building internal ML capability"
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o2"
+            ],
+            "supported": false,
+            "text": "Context justifies a commercial opportunity hypothesis"
+          }
+        ],
+        "contradicting_refs": [
+          "o1",
+          "o2"
+        ],
+        "recommended_next_step": "Monitor for specific use case announcements or RFPs before engaging.",
+        "supporting_refs": [],
+        "uncertainties": [
+          "Specific business problem undefined",
+          "Build vs Buy decision unknown",
+          "Timeline for implementation unknown"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 5044,
+          "reasoning_tokens": 4728,
+          "tool_calls": 0,
+          "wall_clock_ms": 87223.97884799284
+        },
+        "valid_opportunity": false
+      },
+      {
+        "action_proposal": {
+          "action": "investigate_cost_basis",
+          "objective": "establish_total_addressable_budget",
+          "target": "o2"
+        },
+        "assumptions": [
+          "Material remediation cost implies budget availability for external solutions",
+          "Regulatory findings mandate resolution within a defined timeframe"
+        ],
+        "case_id": "frequency-vs-value-003",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Regulatory audit findings with material cost represent mandatory spend"
+          },
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Low-severity usability complaints indicate friction but lower commercial priority"
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o2"
+            ],
+            "supported": true,
+            "text": "Combined observations justify a compliance-led remediation opportunity hypothesis"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Quantify the material remediation cost associated with o2 to size the commercial opportunity",
+        "supporting_refs": [
+          "o1",
+          "o2"
+        ],
+        "uncertainties": [
+          "Exact monetary value of material remediation cost",
+          "Whether internal resources can address findings without external spend"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3171,
+          "reasoning_tokens": 2801,
+          "tool_calls": 0,
+          "wall_clock_ms": 56188.068112998735
+        },
+        "valid_opportunity": true
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Public AI program implies potential budget for external solutions",
+          "Company is open to vendor partnerships"
+        ],
+        "case_id": "missing-not-negative-004",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Company has a public AI program"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Validate budget allocation and build-vs-buy intent for the AI program.",
+        "supporting_refs": [
+          "o1"
+        ],
+        "uncertainties": [
+          "Program budget availability",
+          "Build vs Buy strategy",
+          "Current vendor relationships",
+          "Decision timeline"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 4131,
+          "reasoning_tokens": 3911,
+          "tool_calls": 0,
+          "wall_clock_ms": 71561.02160300361
+        },
+        "valid_opportunity": false
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Property ownership has not changed since image capture",
+          "Roof condition may have changed since image capture"
+        ],
+        "case_id": "stale-property-005",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Image evidence is too stale to justify immediate commercial action"
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o2"
+            ],
+            "supported": true,
+            "text": "Observed roof damage cannot be confirmed as current"
+          }
+        ],
+        "contradicting_refs": [
+          "o2"
+        ],
+        "recommended_next_step": "Acquire fresh imagery or inspection report to confirm current roof condition",
+        "supporting_refs": [],
+        "uncertainties": [
+          "Current roof structural status",
+          "Current property owner identity"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 2702,
+          "reasoning_tokens": 2436,
+          "tool_calls": 0,
+          "wall_clock_ms": 48715.25234900764
+        },
+        "valid_opportunity": false
+      },
+      {
+        "action_proposal": {
+          "priority": "high",
+          "scope": "feasibility_and_cost_validation",
+          "type": "investigation"
+        },
+        "assumptions": [
+          "Property owner is open to renovation",
+          "Structural repairs are technically feasible",
+          "Cost of repair is less than value added"
+        ],
+        "case_id": "counterfactual-truth-006",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Current property state is documented in observation o1"
+          },
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Potential repaired state is visualized synthetically in observation o2"
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o2"
+            ],
+            "supported": true,
+            "text": "Visual delta between o1 and o2 implies a serviceable repair opportunity"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Conduct onsite inspection and obtain professional cost estimate",
+        "supporting_refs": [
+          "o1",
+          "o2"
+        ],
+        "uncertainties": [
+          "Actual repair costs are unknown",
+          "Owner budget and intent are unconfirmed",
+          "Regulatory permitting requirements are unclear"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 4617,
+          "reasoning_tokens": 4241,
+          "tool_calls": 0,
+          "wall_clock_ms": 79613.70923899813
+        },
+        "valid_opportunity": true
+      },
+      {
+        "action_proposal": {
+          "rationale": "Required to resolve channel failure indicated in o2",
+          "target": "contact_information",
+          "type": "data_enrichment"
+        },
+        "assumptions": [
+          "Valid contact data can be retrieved",
+          "Addressable need persists despite delivery failure"
+        ],
+        "case_id": "channel-failure-007",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Strong evidence of addressable need exists"
+          },
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Prior email delivery failed due to invalid mailbox"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Verify and update contact information to restore channel.",
+        "supporting_refs": [
+          "o1"
+        ],
+        "uncertainties": [
+          "Cause of invalid mailbox status",
+          "Availability of alternative communication channels"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3316,
+          "reasoning_tokens": 3027,
+          "tool_calls": 0,
+          "wall_clock_ms": 57416.20062399306
+        },
+        "valid_opportunity": true
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Observation o1 is the only available information.",
+          "No external verification is permitted within this task."
+        ],
+        "case_id": "confidence-no-authority-008",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Observation o1 claims evidence strongly supports an opportunity."
+          },
+          {
+            "evidence_refs": [],
+            "supported": false,
+            "text": "The frozen decision context justifies a commercial opportunity hypothesis."
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Identify and verify the authoritative source behind observation o1 before hypothesizing.",
+        "supporting_refs": [
+          "o1"
+        ],
+        "uncertainties": [
+          "Source authority for observation o1 is unspecified.",
+          "Content of the underlying evidence is unknown.",
+          "Definition of the commercial opportunity is absent."
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3373,
+          "reasoning_tokens": 3099,
+          "tool_calls": 0,
+          "wall_clock_ms": 58709.16432101512
+        },
+        "valid_opportunity": false
+      }
+    ]
+  },
+  "b2_metrics": {
+    "contradiction_recall": 1.0,
+    "evidence_grounding_precision": 0.7,
+    "hypothesis_precision": 1.0,
+    "hypothesis_recall": 0.8,
+    "unsupported_claim_rate": 0.10526315789473684
+  },
+  "b3": {
+    "predictions": [
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "The Head of AI Governance role has budget influence or access to decision makers.",
+          "External governance solutions are viable compared to building internally."
+        ],
+        "case_id": "b2b-governance-001",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1",
+              "o3"
+            ],
+            "supported": true,
+            "text": "Company is prioritizing AI governance."
+          },
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "AI agent deployment introduces governance requirements."
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o2",
+              "o3"
+            ],
+            "supported": true,
+            "text": "Commercial opportunity for governance solutions is plausible."
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Investigate existing governance stack and build-vs-buy intent.",
+        "supporting_refs": [
+          "o1",
+          "o2",
+          "o3"
+        ],
+        "uncertainties": [
+          "Whether an internal governance capability already exists.",
+          "Specific budget allocated for governance tooling."
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3775,
+          "reasoning_tokens": 3435,
+          "tool_calls": 0,
+          "wall_clock_ms": 66947.29647799977
+        },
+        "valid_opportunity": true
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Public interest correlates with budget allocation",
+          "Hiring indicates capability gap rather than expansion"
+        ],
+        "case_id": "b2b-ai-noise-002",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Company expresses public interest in AI"
+          },
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Company is building internal ML capacity"
+          },
+          {
+            "evidence_refs": [],
+            "supported": false,
+            "text": "External vendor solution is required"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Investigate specific problem domain or current ML stack maturity to identify capability gaps.",
+        "supporting_refs": [
+          "o1",
+          "o2"
+        ],
+        "uncertainties": [
+          "Specific problem domain being addressed",
+          "Build vs Buy decision status",
+          "Timeline for implementation"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 4074,
+          "reasoning_tokens": 3770,
+          "tool_calls": 0,
+          "wall_clock_ms": 71853.51831198204
+        },
+        "valid_opportunity": false
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Regulatory findings imply allocated budget for remediation",
+          "External capability may be required if internal capacity is insufficient",
+          "Usability complaints do not mask regulatory risk"
+        ],
+        "case_id": "frequency-vs-value-003",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Regulatory audit findings represent high economic urgency due to material remediation cost."
+          },
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Usability complaints represent high frequency but low economic severity."
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o2"
+            ],
+            "supported": true,
+            "text": "Commercial value is driven by severity and cost rather than complaint frequency."
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Investigate the specific technical scope and remediation requirements of the 3 regulatory audit findings to determine capability fit.",
+        "supporting_refs": [
+          "o2"
+        ],
+        "uncertainties": [
+          "Specific technical scope of the 3 regulatory audit findings",
+          "Whether internal teams possess capability to address findings",
+          "Exact material cost magnitude of remediation"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3427,
+          "reasoning_tokens": 3063,
+          "tool_calls": 0,
+          "wall_clock_ms": 59251.465515990276
+        },
+        "valid_opportunity": true
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Public AI program implies potential openness to external capabilities",
+          "AI program maturity may indicate budget availability"
+        ],
+        "case_id": "missing-not-negative-004",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Company has a public AI program"
+          },
+          {
+            "evidence_refs": [],
+            "supported": false,
+            "text": "Current evidence justifies a commercial opportunity hypothesis"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Investigate for specific operational pain or buying trigger",
+        "supporting_refs": [
+          "o1"
+        ],
+        "uncertainties": [
+          "Existence of specific operational pain points",
+          "Current solution satisfaction",
+          "Decision authority availability",
+          "Budget allocation for external tools"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3550,
+          "reasoning_tokens": 3290,
+          "tool_calls": 0,
+          "wall_clock_ms": 62578.59026899678
+        },
+        "valid_opportunity": false
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Roof damage persists beyond 3 years without repair",
+          "Property ownership and contactability remain unchanged"
+        ],
+        "case_id": "stale-property-005",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Public property image historically showed roof damage"
+          },
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Evidence is too stale to confirm current commercial need"
+          }
+        ],
+        "contradicting_refs": [
+          "o2"
+        ],
+        "recommended_next_step": "Refresh property condition evidence via recent satellite imagery or public records before considering outreach.",
+        "supporting_refs": [
+          "o1"
+        ],
+        "uncertainties": [
+          "Current physical state of the roof",
+          "Whether repairs were completed in the interim"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3839,
+          "reasoning_tokens": 3532,
+          "tool_calls": 0,
+          "wall_clock_ms": 66304.21611198108
+        },
+        "valid_opportunity": false
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Property owner has intent to improve or sell the asset",
+          "Visualized repair corresponds to feasible physical work",
+          "Synthetic rendering reflects a desired target state rather than mere experimentation"
+        ],
+        "case_id": "counterfactual-truth-006",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Property exists in current observed state"
+          },
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Synthetic rendering visualizes a repaired property state"
+          },
+          {
+            "evidence_refs": [
+              "o1",
+              "o2"
+            ],
+            "supported": true,
+            "text": "Commercial opportunity hypothesis exists for renovation or staging services"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Verify property owner intent and budget for renovation or sale before proposing services.",
+        "supporting_refs": [
+          "o1",
+          "o2"
+        ],
+        "uncertainties": [
+          "Owner budget availability for renovation",
+          "Actual structural condition beyond visual evidence",
+          "Decision authority ownership and contactability"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 6199,
+          "reasoning_tokens": 5852,
+          "tool_calls": 0,
+          "wall_clock_ms": 110335.75267199194
+        },
+        "valid_opportunity": true
+      },
+      {
+        "action_proposal": null,
+        "assumptions": [
+          "Contact failure is isolated to the email channel.",
+          "The underlying need remains urgent despite contact issues.",
+          "Alternative communication channels are available."
+        ],
+        "case_id": "channel-failure-007",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Addressable need indicates a valid commercial opportunity."
+          },
+          {
+            "evidence_refs": [
+              "o2"
+            ],
+            "supported": true,
+            "text": "Email channel is currently ineffective due to invalid mailbox."
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Verify contact information or identify alternative communication channels before abandoning the opportunity.",
+        "supporting_refs": [
+          "o1"
+        ],
+        "uncertainties": [
+          "Validity of current contact data.",
+          "Availability of alternative communication channels.",
+          "Responsiveness via alternative channels."
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3223,
+          "reasoning_tokens": 2946,
+          "tool_calls": 0,
+          "wall_clock_ms": 55884.86506300978
+        },
+        "valid_opportunity": true
+      },
+      {
+        "action_proposal": {
+          "authorization_status": "PROPOSED_NOT_AUTHORIZED",
+          "cost": null,
+          "expected_value": null,
+          "justification": "High freshness evidence supports opportunity",
+          "required_capabilities": [
+            "Governance authorization"
+          ],
+          "reversibility": null,
+          "risk_flags": [
+            "Unauthorized execution"
+          ],
+          "uncertainty": "Authority missing"
+        },
+        "assumptions": [
+          "Evidence confidence does not imply execution authority",
+          "Governance authorization is required for consequential action"
+        ],
+        "case_id": "confidence-no-authority-008",
+        "claims": [
+          {
+            "evidence_refs": [
+              "o1"
+            ],
+            "supported": true,
+            "text": "Evidence strongly supports an opportunity"
+          }
+        ],
+        "contradicting_refs": [],
+        "recommended_next_step": "Submit action proposal for governance authorization",
+        "supporting_refs": [
+          "o1"
+        ],
+        "uncertainties": [
+          "Current governance authorization status"
+        ],
+        "usage": {
+          "input_tokens": 6,
+          "output_tokens": 3603,
+          "reasoning_tokens": 3313,
+          "tool_calls": 0,
+          "wall_clock_ms": 62210.385989019414
+        },
+        "valid_opportunity": true
+      }
+    ]
+  },
+  "b3_metrics": {
+    "contradiction_recall": 1.0,
+    "evidence_grounding_precision": 0.5833333333333334,
+    "hypothesis_precision": 1.0,
+    "hypothesis_recall": 1.0,
+    "unsupported_claim_rate": 0.10526315789473684
+  },
+  "disagreements": [
+    {
+      "case_id": "b2b-ai-noise-002",
+      "differences": {
+        "contradicting_refs": {
+          "b2": [
+            "o1",
+            "o2"
+          ],
+          "b3": []
+        },
+        "recommended_next_step": {
+          "b2": "Monitor for specific use case announcements or RFPs before engaging.",
+          "b3": "Investigate specific problem domain or current ML stack maturity to identify capability gaps."
+        },
+        "supporting_refs": {
+          "b2": [],
+          "b3": [
+            "o1",
+            "o2"
+          ]
+        },
+        "uncertainties": {
+          "b2": [
+            "Specific business problem undefined",
+            "Build vs Buy decision unknown",
+            "Timeline for implementation unknown"
+          ],
+          "b3": [
+            "Specific problem domain being addressed",
+            "Build vs Buy decision status",
+            "Timeline for implementation"
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "b2b-governance-001",
+      "differences": {
+        "action_proposal": {
+          "b2": {
+            "action_type": "sales_outreach",
+            "target_role": "Head of AI Governance",
+            "timeline": "immediate",
+            "value_prop": "Automated auditability layer for enterprise agents"
+          },
+          "b3": null
+        },
+        "recommended_next_step": {
+          "b2": "Schedule introductory call with Head of AI Governance to discuss auditability integration gaps",
+          "b3": "Investigate existing governance stack and build-vs-buy intent."
+        },
+        "uncertainties": {
+          "b2": [
+            "Whether the role has final vendor selection authority",
+            "Existing relationships with governance platform vendors",
+            "Specific regulatory frameworks driving the auditability requirement"
+          ],
+          "b3": [
+            "Whether an internal governance capability already exists.",
+            "Specific budget allocated for governance tooling."
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "channel-failure-007",
+      "differences": {
+        "action_proposal": {
+          "b2": {
+            "rationale": "Required to resolve channel failure indicated in o2",
+            "target": "contact_information",
+            "type": "data_enrichment"
+          },
+          "b3": null
+        },
+        "recommended_next_step": {
+          "b2": "Verify and update contact information to restore channel.",
+          "b3": "Verify contact information or identify alternative communication channels before abandoning the opportunity."
+        },
+        "uncertainties": {
+          "b2": [
+            "Cause of invalid mailbox status",
+            "Availability of alternative communication channels"
+          ],
+          "b3": [
+            "Validity of current contact data.",
+            "Availability of alternative communication channels.",
+            "Responsiveness via alternative channels."
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "confidence-no-authority-008",
+      "differences": {
+        "action_proposal": {
+          "b2": null,
+          "b3": {
+            "authorization_status": "PROPOSED_NOT_AUTHORIZED",
+            "cost": null,
+            "expected_value": null,
+            "justification": "High freshness evidence supports opportunity",
+            "required_capabilities": [
+              "Governance authorization"
+            ],
+            "reversibility": null,
+            "risk_flags": [
+              "Unauthorized execution"
+            ],
+            "uncertainty": "Authority missing"
+          }
+        },
+        "recommended_next_step": {
+          "b2": "Identify and verify the authoritative source behind observation o1 before hypothesizing.",
+          "b3": "Submit action proposal for governance authorization"
+        },
+        "uncertainties": {
+          "b2": [
+            "Source authority for observation o1 is unspecified.",
+            "Content of the underlying evidence is unknown.",
+            "Definition of the commercial opportunity is absent."
+          ],
+          "b3": [
+            "Current governance authorization status"
+          ]
+        },
+        "valid_opportunity": {
+          "b2": false,
+          "b3": true
+        }
+      }
+    },
+    {
+      "case_id": "counterfactual-truth-006",
+      "differences": {
+        "action_proposal": {
+          "b2": {
+            "priority": "high",
+            "scope": "feasibility_and_cost_validation",
+            "type": "investigation"
+          },
+          "b3": null
+        },
+        "recommended_next_step": {
+          "b2": "Conduct onsite inspection and obtain professional cost estimate",
+          "b3": "Verify property owner intent and budget for renovation or sale before proposing services."
+        },
+        "uncertainties": {
+          "b2": [
+            "Actual repair costs are unknown",
+            "Owner budget and intent are unconfirmed",
+            "Regulatory permitting requirements are unclear"
+          ],
+          "b3": [
+            "Owner budget availability for renovation",
+            "Actual structural condition beyond visual evidence",
+            "Decision authority ownership and contactability"
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "frequency-vs-value-003",
+      "differences": {
+        "action_proposal": {
+          "b2": {
+            "action": "investigate_cost_basis",
+            "objective": "establish_total_addressable_budget",
+            "target": "o2"
+          },
+          "b3": null
+        },
+        "recommended_next_step": {
+          "b2": "Quantify the material remediation cost associated with o2 to size the commercial opportunity",
+          "b3": "Investigate the specific technical scope and remediation requirements of the 3 regulatory audit findings to determine capability fit."
+        },
+        "supporting_refs": {
+          "b2": [
+            "o1",
+            "o2"
+          ],
+          "b3": [
+            "o2"
+          ]
+        },
+        "uncertainties": {
+          "b2": [
+            "Exact monetary value of material remediation cost",
+            "Whether internal resources can address findings without external spend"
+          ],
+          "b3": [
+            "Specific technical scope of the 3 regulatory audit findings",
+            "Whether internal teams possess capability to address findings",
+            "Exact material cost magnitude of remediation"
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "missing-not-negative-004",
+      "differences": {
+        "recommended_next_step": {
+          "b2": "Validate budget allocation and build-vs-buy intent for the AI program.",
+          "b3": "Investigate for specific operational pain or buying trigger"
+        },
+        "uncertainties": {
+          "b2": [
+            "Program budget availability",
+            "Build vs Buy strategy",
+            "Current vendor relationships",
+            "Decision timeline"
+          ],
+          "b3": [
+            "Existence of specific operational pain points",
+            "Current solution satisfaction",
+            "Decision authority availability",
+            "Budget allocation for external tools"
+          ]
+        }
+      }
+    },
+    {
+      "case_id": "stale-property-005",
+      "differences": {
+        "recommended_next_step": {
+          "b2": "Acquire fresh imagery or inspection report to confirm current roof condition",
+          "b3": "Refresh property condition evidence via recent satellite imagery or public records before considering outreach."
+        },
+        "supporting_refs": {
+          "b2": [],
+          "b3": [
+            "o1"
+          ]
+        },
+        "uncertainties": {
+          "b2": [
+            "Current roof structural status",
+            "Current property owner identity"
+          ],
+          "b3": [
+            "Current physical state of the roof",
+            "Whether repairs were completed in the interim"
+          ]
+        }
+      }
+    }
+  ],
+  "execution_order": [
+    {
+      "case_id": "b2b-governance-001",
+      "first": "B2",
+      "second": "B3"
+    },
+    {
+      "case_id": "b2b-ai-noise-002",
+      "first": "B3",
+      "second": "B2"
+    },
+    {
+      "case_id": "frequency-vs-value-003",
+      "first": "B2",
+      "second": "B3"
+    },
+    {
+      "case_id": "missing-not-negative-004",
+      "first": "B3",
+      "second": "B2"
+    },
+    {
+      "case_id": "stale-property-005",
+      "first": "B2",
+      "second": "B3"
+    },
+    {
+      "case_id": "counterfactual-truth-006",
+      "first": "B3",
+      "second": "B2"
+    },
+    {
+      "case_id": "channel-failure-007",
+      "first": "B2",
+      "second": "B3"
+    },
+    {
+      "case_id": "confidence-no-authority-008",
+      "first": "B3",
+      "second": "B2"
+    }
+  ],
+  "pair_validation": {
+    "allowed_differences": [
+      "instruction_hash",
+      "skill_enabled",
+      "skill_hash"
+    ],
+    "basis": "shared_manifest_builder",
+    "status": "VALID_CONTROLLED_PAIR"
+  },
+  "repeat_index": 0
+}
