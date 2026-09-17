@@ -1,0 +1,18 @@
+name: tender_review_journey
+version: 0.1.0
+description: End-to-end Tender review journey over server-owned SQLite continuity.
+author: Semantier
+kind: standalone
+platforms: [linux, macos, windows]
+capabilities:
+  - journey.resume
+  - policy.setup
+  - context.build
+  - runtime.inspect
+  - evidence.explain
+negative_capabilities:
+  - journey.persist_local
+  - authority.admit
+  - authority.activate
+  - governance.approve
+  - semantic.mutate

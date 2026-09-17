@@ -102,6 +102,21 @@
       "repo": "https://github.com/chris-han/semantier-skills"
     },
     {
+      "id": "chris-han/semantier-skills/plugins/tender_review_journey",
+      "name": "tender_review_journey",
+      "version": "0.1.0",
+      "type": "plugin",
+      "path": "plugins/tender_review_journey",
+      "description": "End-to-end Tender review journey with server-owned resumable state",
+      "author": "Semantier",
+      "category": "Governance",
+      "tags": ["tender", "contextgraph", "review", "journey"],
+      "source": "custom-marketplace",
+      "trust_level": "community",
+      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/tender_review_journey",
+      "repo": "https://github.com/chris-han/semantier-skills"
+    },
+    {
       "id": "chris-han/semantier-skills/plugins/semantica_knowledge_graph",
       "name": "semantica_knowledge_graph",
       "version": "0.1.0",
