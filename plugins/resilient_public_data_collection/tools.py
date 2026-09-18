@@ -8,6 +8,8 @@ import json
 import os
 import re
 import socket
+import subprocess
+import sys
 import urllib.error
 import urllib.request
 import zipfile
@@ -302,15 +304,46 @@ def _inspect_html(page_url: str, body: bytes, max_links: int) -> dict[str, Any]:
 
 
 def prepare_crawlee_runtime(args: dict[str, Any], **_kw: Any) -> str:
-    result = runtime_bootstrap.prepare_runtime(
-        mode=str(args.get("mode") or "core"),
-        runtime_dir=str(args.get("runtime_dir") or "").strip() or None,
-        plan=bool(args.get("plan")),
-        check_only=bool(args.get("check_only")),
-        offline=bool(args.get("offline")),
-        skip_browser_binary=bool(args.get("skip_browser_binary")),
+    command = [
+        sys.executable,
+        str(Path(runtime_bootstrap.__file__)),
+        "--mode",
+        str(args.get("mode") or "core"),
+        "--backend",
+        str(args.get("backend") or "auto"),
+    ]
+    runtime_dir = str(args.get("runtime_dir") or "").strip()
+    if runtime_dir:
+        command.extend(["--runtime-dir", runtime_dir])
+    for key, flag in (
+        ("plan", "--plan"),
+        ("check_only", "--check-only"),
+        ("offline", "--offline"),
+        ("skip_browser_binary", "--skip-browser-binary"),
+    ):
+        if bool(args.get(key)):
+            command.append(flag)
+
+    completed = subprocess.run(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
     )
-    return _json(result)
+    try:
+        payload = json.loads(completed.stdout.strip() or "{}")
+    except json.JSONDecodeError:
+        return _error(
+            "CRAWLEE_BOOTSTRAP_INVALID_OUTPUT",
+            completed.stderr.strip() or completed.stdout.strip() or "bootstrap emitted no JSON",
+            exit_code=completed.returncode,
+        )
+    payload["ok"] = completed.returncode == 0
+    payload["exit_code"] = completed.returncode
+    if completed.stderr.strip():
+        payload["stderr"] = completed.stderr.strip()
+    return _json(payload)
 
 
 def route_public_recovery(args: dict[str, Any], **_kw: Any) -> str:
