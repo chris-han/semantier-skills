@@ -7,7 +7,7 @@ description: >
   forks discovery into alternate official sources and alternate public surfaces on the same
   source, freezes membership before semantic selection, validates raw bytes, and hands a
   bounded corpus to downstream qualification or evaluation.
-version: 0.2.0
+version: 0.2.1
 author: Semantier
 license: MIT
 tags:
@@ -70,7 +70,10 @@ existing Semantier deterministic probe/freeze/verify operations.
 When reusable crawler mechanics are required, call `public_source_prepare_runtime` with
 `mode=core`. The plugin provisions Crawlee `1.10.1` into an isolated Semantier Skills
 runtime cache and returns the interpreter path. It does not modify the host Python
-environment.
+environment. Runtime backend selection is automatic: stdlib `venv` is preferred, but
+minimal Debian/Ubuntu hosts without `ensurepip/python3-venv` automatically fall back to
+a private target-directory runtime installed with host `python -m pip --target` or
+`uv pip install --target`. No `sudo apt install python3-venv` prerequisite is required.
 
 Use `offline=true` when network installation is unavailable or prohibited. Offline mode
 must reuse an already verified cache and must not create a venv, invoke pip, or download a
