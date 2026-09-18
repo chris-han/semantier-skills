@@ -143,10 +143,10 @@
     {
       "id": "chris-han/semantier-skills/plugins/resilient_public_data_collection",
       "name": "resilient_public_data_collection",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "type": "plugin",
       "path": "plugins/resilient_public_data_collection",
-      "description": "Evidence-first public data collection with lazy Crawlee runtime, recovery-before-retry routing, provenance freezing, and reproducible raw-byte acquisition",
+      "description": "Evidence-first public data collection with lazy Crawlee venv/target runtime fallback, recovery-before-retry routing, provenance freezing, and reproducible raw-byte acquisition",
       "author": "Semantier",
       "category": "Research",
       "tags": [
