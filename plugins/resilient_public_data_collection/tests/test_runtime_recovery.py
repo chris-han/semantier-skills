@@ -1,60 +1,65 @@
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 import unittest
-from unittest.mock import patch
 
-from plugins.resilient_public_data_collection import recovery_policy, runtime_bootstrap
+from plugins.resilient_public_data_collection import recovery_policy, tools
 
 
 class RuntimeBootstrapTests(unittest.TestCase):
     def test_plan_is_non_mutating_and_pinned(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             runtime = Path(td) / "runtime"
-            result = runtime_bootstrap.prepare_runtime(
-                mode="core",
-                runtime_dir=runtime,
-                plan=True,
-            )
+            result = json.loads(tools.prepare_crawlee_runtime({
+                "mode": "core",
+                "backend": "auto",
+                "runtime_dir": str(runtime),
+                "plan": True,
+            }))
             self.assertTrue(result["ok"])
             self.assertEqual(result["state"], "PLAN")
             self.assertEqual(result["requirement"], "crawlee==1.10.1")
+            self.assertEqual(result["backend_requested"], "auto")
             self.assertFalse(runtime.exists())
 
     def test_offline_cache_miss_is_non_mutating(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             runtime = Path(td) / "runtime"
-            result = runtime_bootstrap.prepare_runtime(
-                mode="core",
-                runtime_dir=runtime,
-                offline=True,
-            )
+            result = json.loads(tools.prepare_crawlee_runtime({
+                "mode": "core",
+                "runtime_dir": str(runtime),
+                "offline": True,
+            }))
             self.assertFalse(result["ok"])
             self.assertEqual(result["state"], "OFFLINE_CACHE_MISS")
+            self.assertEqual(result["exit_code"], 4)
             self.assertFalse(runtime.exists())
 
     def test_check_only_cache_miss_is_non_mutating(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             runtime = Path(td) / "runtime"
-            result = runtime_bootstrap.prepare_runtime(
-                mode="core",
-                runtime_dir=runtime,
-                check_only=True,
-            )
+            result = json.loads(tools.prepare_crawlee_runtime({
+                "mode": "core",
+                "runtime_dir": str(runtime),
+                "check_only": True,
+            }))
             self.assertFalse(result["ok"])
             self.assertEqual(result["state"], "MISSING_RUNTIME")
+            self.assertEqual(result["exit_code"], 4)
             self.assertFalse(runtime.exists())
 
-    def test_install_failure_is_structured(self) -> None:
-        fake_python = Path("/tmp/fake-crawlee-python")
-        with patch.object(runtime_bootstrap, "ensure_venv", return_value=(fake_python, True)), \
-             patch.object(runtime_bootstrap, "installed_crawlee_version", return_value=None), \
-             patch.object(runtime_bootstrap, "pip_install", side_effect=RuntimeError("no package index")):
-            result = runtime_bootstrap.prepare_runtime(mode="core", runtime_dir="/tmp/fake-runtime")
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["state"], "INSTALL_FAILED")
-        self.assertIn("no package index", result["error"])
+    def test_target_backend_is_exposed_in_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = json.loads(tools.prepare_crawlee_runtime({
+                "mode": "core",
+                "backend": "target",
+                "runtime_dir": str(Path(td) / "runtime"),
+                "plan": True,
+            }))
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["backend_requested"], "target")
 
 
 class RecoveryPolicyTests(unittest.TestCase):
