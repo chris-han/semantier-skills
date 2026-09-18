@@ -6,6 +6,7 @@ PREPARE_CRAWLEE_RUNTIME_SCHEMA = {
     "type": "object",
     "properties": {
         "mode": {"type": "string", "enum": ["core", "browser"], "default": "core"},
+        "backend": {"type": "string", "enum": ["auto", "venv", "target"], "default": "auto"},
         "runtime_dir": {"type": "string"},
         "plan": {"type": "boolean", "default": False},
         "check_only": {"type": "boolean", "default": False},
