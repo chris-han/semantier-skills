@@ -5,8 +5,26 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 BOOT="$ROOT/plugins/resilient_public_data_collection/runtime_bootstrap.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-RUNTIME="$TMP/crawlee-runtime"
 
+run_bootstrap() {
+  local label="$1"
+  local stdout_file="$2"
+  local stderr_file="$3"
+  shift 3
+
+  set +e
+  python3 "$BOOT" "$@" >"$stdout_file" 2>"$stderr_file"
+  local rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    echo "FAIL: $label exited with code $rc" >&2
+    cat "$stdout_file" >&2 || true
+    cat "$stderr_file" >&2 || true
+    return "$rc"
+  fi
+}
+
+RUNTIME="$TMP/crawlee-runtime"
 python3 "$BOOT" --mode core --runtime-dir "$RUNTIME" --plan > "$TMP/plan.json"
 grep -Fq '"requirement": "crawlee==1.10.1"' "$TMP/plan.json"
 [[ ! -e "$RUNTIME" ]] || { echo "FAIL: plan mutated runtime"; exit 1; }
@@ -17,17 +35,39 @@ if python3 "$BOOT" --mode core --runtime-dir "$RUNTIME" --check-only > "$TMP/pre
 fi
 grep -Fq '"state": "MISSING_RUNTIME"' "$TMP/precheck.json"
 
-python3 "$BOOT" --mode core --runtime-dir "$RUNTIME" > "$TMP/install.json"
+run_bootstrap "core install" "$TMP/install.json" "$TMP/install.stderr" --mode core --runtime-dir "$RUNTIME"
 grep -Fq '"state": "READY"' "$TMP/install.json"
 grep -Fq '"installed_version": "1.10.1"' "$TMP/install.json"
 
-VENV_PY="$RUNTIME/venv/bin/python"
-"$VENV_PY" - <<'PY'
+RUNTIME_PY="$(python3 - "$TMP/install.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["python_executable"])
+PY
+)"
+"$RUNTIME_PY" - <<'PY'
 import importlib.metadata
 import importlib.util
 assert importlib.metadata.version("crawlee") == "1.10.1"
 assert importlib.util.find_spec("playwright") is None
 from crawlee.crawlers import FileDownloadCrawler
+assert FileDownloadCrawler
+PY
+
+# Force the fallback used on minimal Debian/Ubuntu hosts without ensurepip/python3-venv.
+TARGET="$TMP/target-runtime"
+run_bootstrap "target fallback install" "$TMP/target.json" "$TMP/target.stderr" --mode core --backend target --runtime-dir "$TARGET"
+grep -Fq '"runtime_backend": "target"' "$TMP/target.json"
+grep -Fq '"installed_version": "1.10.1"' "$TMP/target.json"
+
+TARGET_PY="$(python3 - "$TMP/target.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["python_executable"])
+PY
+)"
+"$TARGET_PY" - <<'PY'
+import importlib.metadata
+from crawlee.crawlers import FileDownloadCrawler
+assert importlib.metadata.version("crawlee") == "1.10.1"
 assert FileDownloadCrawler
 PY
 
@@ -43,9 +83,9 @@ python3 "$BOOT" --mode core --runtime-dir "$RUNTIME" --offline > "$TMP/offline.j
 grep -Fq '"state": "READY"' "$TMP/offline.json"
 grep -Fq '"installed_dependency": false' "$TMP/offline.json"
 
-python3 "$BOOT" --mode browser --runtime-dir "$RUNTIME" --plan > "$TMP/browser-plan.json"
-grep -Fq '"requirement": "crawlee[playwright]==1.10.1"' "$TMP/browser-plan.json"
-grep -Fq '"browser_extra": true' "$TMP/browser-plan.json"
+python3 "$BOOT" --mode core --runtime-dir "$TARGET" --offline > "$TMP/target-offline.json"
+grep -Fq '"state": "READY"' "$TMP/target-offline.json"
+grep -Fq '"runtime_backend": "target"' "$TMP/target-offline.json"
 
 MISS="$TMP/missing"
 if python3 "$BOOT" --mode core --runtime-dir "$MISS" --offline > "$TMP/miss.json"; then
@@ -57,7 +97,7 @@ grep -Fq '"state": "OFFLINE_CACHE_MISS"' "$TMP/miss.json"
 
 FAIL_RUNTIME="$TMP/install-failure"
 set +e
-python3 "$BOOT" --mode core --runtime-dir "$FAIL_RUNTIME" > "$TMP/failure.json" 2> "$TMP/failure.stderr"
+python3 "$BOOT" --mode core --backend target --runtime-dir "$FAIL_RUNTIME" > "$TMP/failure.json" 2> "$TMP/failure.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 6 ]] || { echo "FAIL: expected exit 6, got $RC"; cat "$TMP/failure.json"; exit 1; }
@@ -67,4 +107,4 @@ if grep -Fq "Traceback" "$TMP/failure.stderr"; then
   exit 1
 fi
 
-echo "PASS: Semantier Crawlee lazy bootstrap, offline reuse, and failure behavior"
+echo "PASS: Semantier Crawlee venv/target fallback, offline reuse, and failure behavior"
