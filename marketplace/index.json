@@ -110,7 +110,12 @@
       "description": "End-to-end Tender review journey with server-owned resumable state",
       "author": "Semantier",
       "category": "Governance",
-      "tags": ["tender", "contextgraph", "review", "journey"],
+      "tags": [
+        "tender",
+        "contextgraph",
+        "review",
+        "journey"
+      ],
       "source": "custom-marketplace",
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/tender_review_journey",
@@ -138,10 +143,10 @@
     {
       "id": "chris-han/semantier-skills/plugins/resilient_public_data_collection",
       "name": "resilient_public_data_collection",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "type": "plugin",
       "path": "plugins/resilient_public_data_collection",
-      "description": "Evidence-first public data collection with resilient source discovery and reproducible raw-byte acquisition",
+      "description": "Evidence-first public data collection with lazy Crawlee runtime, recovery-before-retry routing, provenance freezing, and reproducible raw-byte acquisition",
       "author": "Semantier",
       "category": "Research",
       "tags": [
