@@ -2,6 +2,36 @@ from __future__ import annotations
 
 TOOLSET_NAME = "resilient-public-data-collection"
 
+PREPARE_CRAWLEE_RUNTIME_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "mode": {"type": "string", "enum": ["core", "browser"], "default": "core"},
+        "runtime_dir": {"type": "string"},
+        "plan": {"type": "boolean", "default": False},
+        "check_only": {"type": "boolean", "default": False},
+        "offline": {"type": "boolean", "default": False},
+        "skip_browser_binary": {"type": "boolean", "default": False},
+    },
+}
+
+ROUTE_PUBLIC_RECOVERY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "initial_failure": {
+            "type": "string",
+            "description": "Observed failure class such as LOGIN_REQUIRED, HOST_NOT_ALLOWLISTED, or ATTACHMENT_HTTP_FAILURE.",
+        },
+        "http_status": {"type": ["integer", "null"]},
+        "alternate_source": {"type": "string"},
+        "same_site_alternate_entry": {"type": "string"},
+        "public_resource_confirmed": {"type": "boolean", "default": False},
+        "blocked_interpretation": {"type": "string"},
+        "rate_backoff_respected": {"type": "boolean", "default": False},
+        "blocked_retry_attempts": {"type": "integer", "minimum": 0, "default": 0},
+    },
+    "required": ["initial_failure"],
+}
+
 PROBE_PUBLIC_URL_SCHEMA = {
     "type": "object",
     "properties": {
