@@ -7,7 +7,7 @@ description: >
   forks discovery into alternate official sources and alternate public surfaces on the same
   source, freezes membership before semantic selection, validates raw bytes, and hands a
   bounded corpus to downstream qualification or evaluation.
-version: 0.1.0
+version: 0.2.0
 author: Semantier
 license: MIT
 tags:
@@ -35,6 +35,8 @@ representation of the target data.
 
 Use the registered tools directly for the mechanical parts of this workflow:
 
+- `public_source_prepare_runtime` — lazily provision or verify the isolated Crawlee runtime. Core mode pins `crawlee==1.10.1`; browser mode is a separate escalation to `crawlee[playwright]==1.10.1` plus Chromium. `offline=true` is cache-only and `check_only=true` is non-mutating.
+- `public_source_route_recovery` — deterministically enforce recovery-before-retry ordering for blocked acquisition. A recovered alternate source or same-site public entry wins before any blocked retry; 401 never auto-escalates; eligible public/session-like 403 and post-backoff 429 may retry once.
 - `public_source_probe` — perform one bounded public HTTP(S) request, preserve ordinary
   browser request semantics, and classify the result as public response, access/auth block,
   WAF/anti-bot, rate limit, or other HTTP error.
@@ -57,7 +59,28 @@ Use the registered tools directly for the mechanical parts of this workflow:
 
 The tools are the executable owner for URL safety, public-network checks, bounded response
 sizes, content-addressed persistence, immutable release freeze, and offline hash replay.
-The skill owns routing and workflow decisions around those tools.
+Crawlee owns reusable crawler/session/queue/browser mechanics when those capabilities are
+actually needed. The skill owns routing and workflow decisions around those tools.
+
+### Runtime dependency contract
+
+Do not install Crawlee when this skill is only being read, reviewed, planned, or used for
+existing Semantier deterministic probe/freeze/verify operations.
+
+When reusable crawler mechanics are required, call `public_source_prepare_runtime` with
+`mode=core`. The plugin provisions Crawlee `1.10.1` into an isolated Semantier Skills
+runtime cache and returns the interpreter path. It does not modify the host Python
+environment.
+
+Use `offline=true` when network installation is unavailable or prohibited. Offline mode
+must reuse an already verified cache and must not create a venv, invoke pip, or download a
+browser. Use `check_only=true` for a non-mutating readiness check. Missing or invalid
+offline capability is reported explicitly rather than silently repaired.
+
+Browser support is a separate escalation. Only when a public path demonstrably requires
+JavaScript/browser behavior should the workflow call `public_source_prepare_runtime` with
+`mode=browser`. That is the only path that installs the Playwright extra and Chromium.
+
 
 When the tool surface is unavailable, report that missing capability rather than replacing
 it with an improvised runtime fetcher.
@@ -213,6 +236,26 @@ solving, session impersonation, and access-control circumvention are outside thi
 classify those paths as gated and continue with legitimate public surfaces.
 
 ## 5. Authentication and anti-bot interpretation
+
+Use `public_source_route_recovery` to keep the recovery order mechanical:
+
+~~~text
+initial blocked observation
+→ alternate authoritative source
+→ same-site alternate public entry
+→ recovered? use recovered route
+→ otherwise eligibility gate
+   → 401: stop as AUTH_REQUIRED
+   → 403: one blocked retry only if confirmed public + SESSION_OR_BOT_BLOCK
+   → 429: wait/backoff first, then at most one blocked retry
+→ after one blocked retry: stop rather than loop
+~~~
+
+This policy comes from the CCGP collection failure/recovery episode: the initial blocked
+path did not establish source absence; alternate official sources and alternate CCGP public
+announcement/attachment surfaces produced usable evidence before transport escalation was
+justified.
+
 
 Authentication is a property of a path or operation, not automatically of the underlying
 information object.
