@@ -8,6 +8,20 @@ from . import schemas, tools
 
 def register(ctx: Any) -> None:
     ctx.register_tool(
+        name="public_source_prepare_runtime",
+        toolset=schemas.TOOLSET_NAME,
+        schema=schemas.function_schema(schemas.PREPARE_CRAWLEE_RUNTIME_SCHEMA),
+        handler=tools.prepare_crawlee_runtime,
+        description="Lazily provision or verify the pinned Crawlee core/browser runtime, including offline cache-only mode.",
+    )
+    ctx.register_tool(
+        name="public_source_route_recovery",
+        toolset=schemas.TOOLSET_NAME,
+        schema=schemas.function_schema(schemas.ROUTE_PUBLIC_RECOVERY_SCHEMA),
+        handler=tools.route_public_recovery,
+        description="Deterministically route a blocked public-source acquisition through recovery-before-retry policy.",
+    )
+    ctx.register_tool(
         name="public_source_probe",
         toolset=schemas.TOOLSET_NAME,
         schema=schemas.function_schema(schemas.PROBE_PUBLIC_URL_SCHEMA),
