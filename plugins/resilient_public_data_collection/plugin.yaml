@@ -1,5 +1,5 @@
 name: resilient_public_data_collection
-version: 0.2.0
+version: 0.2.1
 description: Evidence-first public data collection with resilient source discovery, provenance freezing, and reproducible raw-byte acquisition.
 author: Semantier
 kind: standalone
