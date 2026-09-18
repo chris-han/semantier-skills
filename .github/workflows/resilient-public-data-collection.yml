@@ -1,0 +1,37 @@
+name: Resilient Public Data Collection
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/resilient_public_data_collection/**'
+      - 'marketplace/index.json'
+      - '.github/workflows/resilient-public-data-collection.yml'
+  pull_request:
+    paths:
+      - 'plugins/resilient_public_data_collection/**'
+      - 'marketplace/index.json'
+      - '.github/workflows/resilient-public-data-collection.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit contracts
+        run: python3 -m unittest plugins.resilient_public_data_collection.tests.test_runtime_recovery -v
+      - name: Crawlee fresh install and offline reuse
+        run: bash plugins/resilient_public_data_collection/tests/test_crawlee_bootstrap.sh
+      - name: Plugin metadata
+        run: |
+          grep -Fq 'version: 0.2.0' plugins/resilient_public_data_collection/plugin.yaml
+          python3 - <<'PY'
+          import json
+          data = json.load(open("marketplace/index.json", encoding="utf-8"))
+          item = next(x for x in data["skills"] if x["name"] == "resilient_public_data_collection")
+          assert item["version"] == "0.2.0"
+          PY
