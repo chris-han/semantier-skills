@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 
+from . import recovery_policy, runtime_bootstrap
+
 
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -297,6 +299,23 @@ def _inspect_html(page_url: str, body: bytes, max_links: int) -> dict[str, Any]:
         "scripts": [urljoin(page_url, item) for item in parser.scripts[:max_links]],
         "forms": [urljoin(page_url, item) for item in parser.forms[:max_links]],
     }
+
+
+def prepare_crawlee_runtime(args: dict[str, Any], **_kw: Any) -> str:
+    result = runtime_bootstrap.prepare_runtime(
+        mode=str(args.get("mode") or "core"),
+        runtime_dir=str(args.get("runtime_dir") or "").strip() or None,
+        plan=bool(args.get("plan")),
+        check_only=bool(args.get("check_only")),
+        offline=bool(args.get("offline")),
+        skip_browser_binary=bool(args.get("skip_browser_binary")),
+    )
+    return _json(result)
+
+
+def route_public_recovery(args: dict[str, Any], **_kw: Any) -> str:
+    next_state = recovery_policy.decide_recovery(dict(args))
+    return _json({"ok": True, "next_state": next_state})
 
 
 def probe_public_url(args: dict[str, Any], **_kw: Any) -> str:
