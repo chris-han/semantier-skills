@@ -1,9 +1,11 @@
 name: resilient_public_data_collection
-version: 0.1.0
+version: 0.2.0
 description: Evidence-first public data collection with resilient source discovery, provenance freezing, and reproducible raw-byte acquisition.
 author: Semantier
 kind: standalone
 provides_tools:
+  - public_source_prepare_runtime
+  - public_source_route_recovery
   - public_source_probe
   - public_source_inspect_page
   - public_source_freeze_membership
