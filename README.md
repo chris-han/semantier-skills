@@ -11,6 +11,7 @@ Plugin authoring guidance lives in [docs/derived/semantier-marketplace-plugin-cr
 - `vc_github_opportunity_radar`
 - `evidence_driven_opportunity_discovery`
 - `tender_review_journey`
+- `resilient_public_data_collection`
 
 ## Plugin Layout
 
@@ -58,6 +59,12 @@ The Tender Review Journey plugin is installable from this repository with:
 
 ```text
 chris-han/semantier-skills/plugins/tender_review_journey
+```
+
+The Resilient Public Data Collection plugin is installable from this repository with:
+
+```text
+chris-han/semantier-skills/plugins/resilient_public_data_collection
 ```
 
 `real_company_onboarding` is a built-in shared Semantier runtime plugin. Its

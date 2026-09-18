@@ -1,0 +1,17 @@
+name: resilient_public_data_collection
+version: 0.1.0
+description: Evidence-first public data collection with resilient source discovery, provenance freezing, and reproducible raw-byte acquisition.
+author: Semantier
+kind: standalone
+provides_tools:
+  - public_source_probe
+  - public_source_inspect_page
+  - public_source_freeze_membership
+  - public_source_capture_object
+  - public_source_freeze_collection
+  - public_source_verify_collection
+provides_hooks: []
+platforms:
+  - linux
+  - macos
+  - windows
