@@ -753,12 +753,20 @@ class _FeishuClient:
         return list(attendees or [])
 
     def send_attendee_message(
-        self, *, attendee_open_ids: list[str], message: str
+        self,
+        *,
+        attendee_open_ids: list[str],
+        message: str,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         return _feishu_helper().send_attendee_message(
             attendee_open_ids=attendee_open_ids,
             message=message,
+            idempotency_key=idempotency_key,
         )
+
+    def get_message(self, *, message_id: str) -> dict[str, Any]:
+        return _feishu_helper().get_message(message_id=message_id)
 
 
 class _CreatorDeliveryClient:

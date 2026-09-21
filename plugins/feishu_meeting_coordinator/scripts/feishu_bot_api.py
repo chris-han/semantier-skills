@@ -56,6 +56,7 @@ from lark_oapi.api.im.v1 import (
     CreateMessageRequestBodyBuilder,
     CreateMessageRequestBuilder,
     GetChatMembersRequestBuilder,
+    GetMessageRequestBuilder,
     ListChatRequestBuilder,
 )
 from lark_oapi.core.exception import ObtainAccessTokenException
@@ -860,6 +861,7 @@ def send_attendee_message(
     *,
     attendee_open_ids: list[str],
     message: str,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     normalized_message = message.strip()
     if not normalized_message:
@@ -868,6 +870,7 @@ def send_attendee_message(
     content = json.dumps({"text": normalized_message}, ensure_ascii=False)
     delivered: list[str] = []
     failed: list[dict[str, str]] = []
+    message_ids: dict[str, str] = {}
     client = _get_client()
 
     for attendee_open_id in attendee_open_ids:
@@ -875,20 +878,74 @@ def send_attendee_message(
         if not target:
             continue
         try:
-            body = (
+            builder = (
                 CreateMessageRequestBodyBuilder()
                 .receive_id(target)
                 .msg_type("text")
                 .content(content)
+            )
+            if idempotency_key:
+                stable_uuid = str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, f"{idempotency_key}:{target}")
+                )
+                builder = builder.uuid(stable_uuid)
+            body = builder.build()
+            req = (
+                CreateMessageRequestBuilder()
+                .receive_id_type("open_id")
+                .request_body(body)
                 .build()
             )
-            req = CreateMessageRequestBuilder().receive_id_type("open_id").request_body(body).build()
-            _unwrap(client.im.v1.message.create(req))
+            data = _unwrap(client.im.v1.message.create(req))
+            provider_message_id = str(_get_attr(data, "message_id") or "").strip()
             delivered.append(target)
+            if provider_message_id:
+                message_ids[target] = provider_message_id
         except FeishuSkillError as exc:
             failed.append({"attendee_open_id": target, "error": str(exc)})
 
-    return {"delivered": delivered, "failed": failed}
+    result: dict[str, Any] = {
+        "delivered": delivered,
+        "failed": failed,
+        "message_ids": message_ids,
+    }
+    if len(delivered) == 1:
+        only_target = delivered[0]
+        if only_target in message_ids:
+            result["message_id"] = message_ids[only_target]
+    return result
+
+
+def get_message(*, message_id: str) -> dict[str, Any]:
+    normalized = message_id.strip()
+    if not normalized:
+        raise FeishuSkillError("message_id is required")
+    req = GetMessageRequestBuilder().message_id(normalized).build()
+    data = _unwrap(_get_client().im.v1.message.get(req))
+    items = list(_get_attr(data, "items") or [])
+    normalized_items: list[dict[str, Any]] = []
+    for item in items:
+        normalized_items.append(
+            {
+                "message_id": str(_get_attr(item, "message_id") or ""),
+                "msg_type": str(_get_attr(item, "msg_type") or ""),
+                "create_time": _get_attr(item, "create_time"),
+                "update_time": _get_attr(item, "update_time"),
+                "deleted": bool(_get_attr(item, "deleted") or False),
+                "chat_id": str(_get_attr(item, "chat_id") or ""),
+                "body": _get_attr(item, "body"),
+            }
+        )
+    matched = next(
+        (item for item in normalized_items if item["message_id"] == normalized),
+        None,
+    )
+    return {
+        "message_id": normalized,
+        "found": matched is not None,
+        "message": matched,
+        "items": normalized_items,
+    }
 
 
 def finalize_negotiation_and_create_meeting(
