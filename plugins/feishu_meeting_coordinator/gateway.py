@@ -593,6 +593,468 @@ def _schedule_interval_minutes(schedule: Any) -> int | None:
     return minutes if minutes > 0 else None
 
 
+def _followup_semantic_round(
+    *, negotiation_id: str, store: MeetingCoordinatorStore
+) -> int:
+    counts = [
+        int(item.get("followup_count") or 0)
+        for item in store.list_negotiation_participants(negotiation_id)
+    ]
+    return max(counts, default=0) + 1
+
+
+def _register_followup_timer(
+    *,
+    negotiation_id: str,
+    store: MeetingCoordinatorStore,
+    scheduled_at: str,
+):
+    from agents.timer_occurrence import TimerOccurrenceStore
+
+    return TimerOccurrenceStore(store.path).register(
+        workflow_type="meeting_negotiation",
+        workflow_id=negotiation_id,
+        purpose="followup_reminder",
+        semantic_round=_followup_semantic_round(
+            negotiation_id=negotiation_id,
+            store=store,
+        ),
+        scheduled_at=scheduled_at,
+    )
+
+
+def _followup_provider_job_name(negotiation_id: str, timer_id: str) -> str:
+    return f"{_followup_cron_name(negotiation_id)}::{timer_id}"
+
+
+def _followup_script_name(negotiation_id: str) -> str:
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", negotiation_id).strip("-")
+    return f"{_FOLLOWUP_CRON_SCRIPT_PREFIX}{safe_id or 'negotiation'}.py"
+
+
+def _native_followup_payload_bytes(
+    *, attendee_user_id: str, target_id: str, message: str
+) -> bytes:
+    return json.dumps(
+        {
+            "attendee_user_id": attendee_user_id,
+            "target_id": target_id,
+            "message": message,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _negotiation_workflow_version(
+    *, conn, store: MeetingCoordinatorStore, negotiation_id: str
+):
+    from agents.durable_event_arbitration import WorkflowVersion
+
+    row = conn.execute(
+        "SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?",
+        (negotiation_id,),
+    ).fetchone()
+    if row is None:
+        raise KeyError(negotiation_id)
+    status = str(row[0] if not hasattr(row, "keys") else row["status"])
+    return WorkflowVersion(
+        version=store.negotiation_event_count(negotiation_id, conn=conn),
+        terminal=status in {
+            "consented",
+            "requester_decided",
+            "cancelled",
+            "expired",
+            "failed",
+        },
+    )
+
+
+def _admit_native_followup_effects(
+    *,
+    negotiation_id: str,
+    timer_id: str,
+    store: MeetingCoordinatorStore,
+    specs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    from agents.durable_event_arbitration import DurableEventInbox, WorkflowVersion
+    from agents.effect_outbox import AtomicEffectOutbox, derive_effect_identity
+
+    inbox = DurableEventInbox(store.path)
+    expected_version = store.negotiation_event_count(negotiation_id)
+
+    def load_state(conn):
+        return _negotiation_workflow_version(
+            conn=conn,
+            store=store,
+            negotiation_id=negotiation_id,
+        )
+
+    def transition(conn, current):
+        if current.terminal:
+            return current, []
+        admitted: list[dict[str, Any]] = []
+        for spec in specs:
+            semantic_round = int(spec["semantic_round"])
+            reserved = store.reserve_native_followup_effect(
+                conn,
+                negotiation_id=negotiation_id,
+                attendee_user_id=str(spec["attendee_user_id"]),
+                target_id=str(spec["target_id"]),
+                message=str(spec["message"]),
+                semantic_round=semantic_round,
+            )
+            payload = _native_followup_payload_bytes(
+                attendee_user_id=str(spec["attendee_user_id"]),
+                target_id=str(spec["target_id"]),
+                message=str(spec["message"]),
+            )
+            effect = AtomicEffectOutbox.enqueue_ready(
+                conn,
+                workflow_id=negotiation_id,
+                effect_type=f"FOLLOWUP_REMINDER:{spec['attendee_user_id']}",
+                semantic_round=semantic_round,
+                canonical_payload=payload,
+            )
+            admitted.append(
+                {
+                    **spec,
+                    "effect_id": effect.effect_id,
+                    "idempotency_key": effect.idempotency_key,
+                    "message_event_id": reserved["message"]["message_event_id"],
+                }
+            )
+        store._record_negotiation_event(
+            conn,
+            negotiation_id=negotiation_id,
+            event_type="FOLLOWUP_EFFECTS_ADMITTED",
+            actor_type="system",
+            actor_id="meeting-time-negotiator",
+            payload={
+                "timer_id": timer_id,
+                "effect_ids": [item["effect_id"] for item in admitted],
+            },
+            prior_state_version=current.version,
+            next_state_version=current.version + 1,
+        )
+        return WorkflowVersion(current.version + 1, False), admitted
+
+    result = inbox.accept(
+        workflow_type="meeting_negotiation",
+        workflow_id=negotiation_id,
+        event_id=f"timer_event:{timer_id}",
+        event_type="REMINDER_DEADLINE",
+        dedupe_key=f"timer:{timer_id}",
+        expected_state_version=expected_version,
+        load_state=load_state,
+        transition=transition,
+    )
+    if result.value is not None:
+        return result.value
+
+    # Duplicate provider delivery: derive the same effect identities and retrieve
+    # their deterministic domain reservation rather than creating new work.
+    replay: list[dict[str, Any]] = []
+    for spec in specs:
+        semantic_round = int(spec["semantic_round"])
+        payload = _native_followup_payload_bytes(
+            attendee_user_id=str(spec["attendee_user_id"]),
+            target_id=str(spec["target_id"]),
+            message=str(spec["message"]),
+        )
+        effect = derive_effect_identity(
+            workflow_id=negotiation_id,
+            effect_type=f"FOLLOWUP_REMINDER:{spec['attendee_user_id']}",
+            semantic_round=semantic_round,
+            canonical_payload=payload,
+        )
+        message_row = store.get_native_followup_message(
+            negotiation_id=negotiation_id,
+            attendee_user_id=str(spec["attendee_user_id"]),
+            semantic_round=semantic_round,
+        )
+        if message_row is None:
+            continue
+        replay.append(
+            {
+                **spec,
+                "effect_id": effect.effect_id,
+                "idempotency_key": effect.idempotency_key,
+                "message_event_id": message_row["message_event_id"],
+            }
+        )
+    return replay
+
+
+def _dispatch_native_followup_effect(
+    *,
+    negotiation_id: str,
+    store: MeetingCoordinatorStore,
+    client: Any,
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    from agents.effect_outbox import (
+        AtomicEffectOutbox,
+        COMPLETED,
+        DISPATCHING,
+        EFFECT_UNKNOWN,
+        FAILED_SAFE,
+        READY,
+    )
+    from agents.effect_reconciliation import (
+        CONFIRMED_COMPLETED,
+        EffectReconciliationService,
+        FeishuMessageEvidenceAdapter,
+    )
+
+    outbox = AtomicEffectOutbox(store.path)
+    effect_id = str(item["effect_id"])
+    target_id = str(item["target_id"])
+    message = str(item["message"])
+    attendee_user_id = str(item["attendee_user_id"])
+    message_event_id = str(item["message_event_id"])
+
+    def replay_send(*, canonical_payload: bytes, idempotency_key: str):
+        payload = json.loads(canonical_payload.decode("utf-8"))
+        return client.send_attendee_message(
+            attendee_open_ids=[str(payload["target_id"])],
+            message=str(payload["message"]),
+            idempotency_key=idempotency_key,
+        )
+
+    provider = FeishuMessageEvidenceAdapter(
+        send_message=replay_send,
+        get_message=lambda *, message_id: client.get_message(message_id=message_id),
+    )
+
+    record = outbox.get(effect_id)
+    if record is None:
+        raise RuntimeError(f"missing effect {effect_id}")
+
+    if record.state == DISPATCHING:
+        attempt_id = str(record.dispatch_attempt_id or "").strip()
+        if attempt_id:
+            outbox.mark_effect_unknown(
+                effect_id=effect_id,
+                attempt_id=attempt_id,
+                failure_detail="recovered_after_incomplete_followup_dispatch",
+            )
+        record = outbox.get(effect_id)
+        assert record is not None
+
+    if record.state == EFFECT_UNKNOWN:
+        reconciled = EffectReconciliationService(outbox).reconcile(
+            effect_id=effect_id,
+            provider=provider,
+        )
+        record = outbox.get(effect_id)
+        assert record is not None
+        if reconciled.outcome != CONFIRMED_COMPLETED:
+            return {
+                "effect_id": effect_id,
+                "state": record.state,
+                "reconciliation": reconciled.outcome,
+                "applied": False,
+            }
+
+    if record.state == FAILED_SAFE:
+        outbox.retry_failed_safe(effect_id=effect_id)
+        record = outbox.get(effect_id)
+        assert record is not None
+
+    if record.state == READY:
+        attempt_id = f"dispatch:{effect_id}"
+        claimed = outbox.claim_dispatch(effect_id=effect_id, attempt_id=attempt_id)
+        if claimed:
+            try:
+                result = client.send_attendee_message(
+                    attendee_open_ids=[target_id],
+                    message=message,
+                    idempotency_key=record.idempotency_key,
+                )
+            except Exception as exc:
+                outbox.mark_effect_unknown(
+                    effect_id=effect_id,
+                    attempt_id=attempt_id,
+                    failure_detail=f"provider_exception:{type(exc).__name__}",
+                )
+            else:
+                result = result if isinstance(result, dict) else {}
+                delivered = list(result.get("delivered") or [])
+                provider_message_id = str(
+                    result.get("message_id")
+                    or (result.get("message_ids") or {}).get(target_id)
+                    or ""
+                ).strip()
+                if target_id in delivered and provider_message_id:
+                    outbox.pin_provider_correlation(
+                        effect_id=effect_id,
+                        correlation_ref=provider_message_id,
+                    )
+                    outbox.mark_completed(
+                        effect_id=effect_id,
+                        attempt_id=attempt_id,
+                        receipt_ref=provider_message_id,
+                    )
+                elif delivered:
+                    outbox.mark_effect_unknown(
+                        effect_id=effect_id,
+                        attempt_id=attempt_id,
+                        failure_detail="provider_delivered_without_message_id",
+                    )
+                else:
+                    outbox.mark_failed_safe(
+                        effect_id=effect_id,
+                        attempt_id=attempt_id,
+                        failure_detail=json.dumps(
+                            result.get("failed") or [],
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    )
+        record = outbox.get(effect_id)
+        assert record is not None
+
+    if record.state == EFFECT_UNKNOWN:
+        reconciled = EffectReconciliationService(outbox).reconcile(
+            effect_id=effect_id,
+            provider=provider,
+        )
+        record = outbox.get(effect_id)
+        assert record is not None
+        if reconciled.outcome != CONFIRMED_COMPLETED:
+            return {
+                "effect_id": effect_id,
+                "state": record.state,
+                "reconciliation": reconciled.outcome,
+                "applied": False,
+            }
+
+    if record.state == COMPLETED:
+        provider_message_id = str(
+            record.receipt_ref or record.provider_correlation_ref or ""
+        ).strip()
+        if not provider_message_id:
+            raise RuntimeError("completed followup effect missing provider correlation")
+        applied = store.complete_native_followup_effect(
+            negotiation_id=negotiation_id,
+            attendee_user_id=attendee_user_id,
+            message_event_id=message_event_id,
+            provider_message_id=provider_message_id,
+        )
+        return {
+            "effect_id": effect_id,
+            "state": COMPLETED,
+            "provider_message_id": provider_message_id,
+            "applied": bool(applied["applied"]),
+        }
+
+    return {"effect_id": effect_id, "state": record.state, "applied": False}
+
+
+def _admit_clarification_continuation(
+    *,
+    negotiation: dict[str, Any],
+    accepted_message: dict[str, Any],
+    participant_user_id: str,
+    payload: dict[str, Any],
+    reason: str,
+    store: MeetingCoordinatorStore,
+) -> dict[str, Any]:
+    from agents.durable_event_arbitration import DurableEventInbox, WorkflowVersion
+    from agents.internal_continuation import ContinuationAdmissionStore
+    from agents.internal_continuation_runtime import schedule_admitted_internal_continuation
+
+    try:
+        binding = json.loads(str(negotiation.get("creator_delivery_binding_json") or "{}"))
+    except json.JSONDecodeError:
+        binding = {}
+    session_key = str(binding.get("session_key") or "").strip()
+    workspace_id = str(negotiation.get("workspace_id") or "").strip()
+    if not session_key or not workspace_id:
+        return {
+            "continuation_admitted": False,
+            "continuation_scheduled": False,
+            "continuation_reason": "missing_runtime_binding",
+        }
+
+    negotiation_id = str(negotiation["negotiation_id"])
+    message_event_id = str(accepted_message["message_event_id"])
+    expected_version = store.negotiation_event_count(negotiation_id)
+    inbox = DurableEventInbox(store.path)
+
+    def load_state(conn):
+        return _negotiation_workflow_version(
+            conn=conn,
+            store=store,
+            negotiation_id=negotiation_id,
+        )
+
+    def transition(conn, current):
+        if current.terminal:
+            return current, None
+        continuation = ContinuationAdmissionStore.admit(
+            conn,
+            workspace_id=workspace_id,
+            workflow_id=negotiation_id,
+            event_id=message_event_id,
+            session_key=session_key,
+            bounded_payload={
+                "kind": "AGENT_CONTINUE",
+                "reason": reason,
+                "negotiation_id": negotiation_id,
+                "message_event_id": message_event_id,
+                "participant_user_id": participant_user_id,
+                "reply_text": str(payload.get("reply_text") or ""),
+                "intent": str(payload.get("intent") or payload.get("vote") or ""),
+            },
+        )
+        store._record_negotiation_event(
+            conn,
+            negotiation_id=negotiation_id,
+            event_type="CLARIFICATION_CONTINUATION_ADMITTED",
+            actor_type="system",
+            actor_id="meeting-time-negotiator",
+            payload={
+                "continuation_id": continuation.continuation_id,
+                "message_event_id": message_event_id,
+                "reason": reason,
+            },
+            prior_state_version=current.version,
+            next_state_version=current.version + 1,
+        )
+        return WorkflowVersion(current.version + 1, False), continuation
+
+    accepted = inbox.accept(
+        workflow_type="meeting_negotiation",
+        workflow_id=negotiation_id,
+        event_id=f"clarification:{message_event_id}",
+        event_type="AMBIGUOUS_AVAILABILITY",
+        dedupe_key=f"clarification:{message_event_id}",
+        expected_state_version=expected_version,
+        load_state=load_state,
+        transition=transition,
+    )
+    continuation = accepted.value
+    if continuation is None:
+        return {
+            "continuation_admitted": False,
+            "continuation_scheduled": False,
+            "continuation_reason": "duplicate_or_terminal",
+        }
+    scheduled = schedule_admitted_internal_continuation(
+        state_db_path=store.path,
+        continuation_id=continuation.continuation_id,
+    )
+    return {
+        "continuation_admitted": True,
+        "continuation_scheduled": bool(scheduled),
+        "continuation_id": continuation.continuation_id,
+        "continuation_state": continuation.state,
+    }
+
+
 def _cron_followup_interval_minutes(
     monitor: dict[str, Any],
     cron: CronClient | None,
@@ -1341,6 +1803,15 @@ def ensure_negotiation_followup_cron(
                 followup_cron_status="repair_required",
             )
         raise
+    interval_minutes = _schedule_interval_minutes(schedule) or 2
+    scheduled_at = (
+        datetime.now(timezone.utc) + timedelta(minutes=int(interval_minutes))
+    ).isoformat().replace("+00:00", "Z")
+    timer = _register_followup_timer(
+        negotiation_id=negotiation_id,
+        store=store,
+        scheduled_at=scheduled_at,
+    )
     prompt = _prompt(
         "NEGOTIATION_FOLLOWUP_TICK.md",
         negotiation_id=negotiation_id,
@@ -1349,15 +1820,15 @@ def ensure_negotiation_followup_cron(
     )
     try:
         cron_job_id = cron.ensure_job(
-            name=cron_name,
-            schedule=schedule,
+            name=_followup_provider_job_name(negotiation_id, timer.timer_id),
+            schedule=timer.scheduled_at,
             profile="meeting-coordinator",
             prompt=prompt,
             skills=["feishu_meeting_coordinator"],
             deliver="local",
-            repeat=0,
-            no_agent=False,
-            script=None,
+            repeat=1,
+            no_agent=True,
+            script=_followup_script_name(negotiation_id),
         )
     except Exception:
         try:
@@ -1372,19 +1843,7 @@ def ensure_negotiation_followup_cron(
             pass
         raise
 
-    try:
-        interval_minutes = 2
-        if hasattr(cron, "get_job"):
-            job = cron.get_job(cron_job_id)
-            if isinstance(job, dict):
-                interval_minutes = _schedule_interval_minutes(
-                    job.get("schedule") or job.get("schedule_display")
-                ) or interval_minutes
-        next_followup_at = (
-            datetime.now(timezone.utc) + timedelta(minutes=int(interval_minutes))
-        ).isoformat().replace("+00:00", "Z")
-    except Exception:
-        next_followup_at = None
+    next_followup_at = timer.scheduled_at
 
     try:
         store.ensure_followup_cron_ownership(
@@ -1621,6 +2080,7 @@ def negotiation_followup_cron_tick(
     negotiation_id = str(payload.get("negotiation_id") or "").strip()
     if not negotiation_id:
         raise ValueError("negotiation_id is required")
+    timer_id = str(payload.get("timer_id") or "").strip()
 
     owner = str(payload.get("owner") or f"negotiation_followup_cron:{negotiation_id}")
     if not store.acquire_negotiation_case_lock(
@@ -1693,6 +2153,92 @@ def negotiation_followup_cron_tick(
             return "unknown"
 
         negotiation = store.get_negotiation(negotiation_id)
+        if not timer_id:
+            legacy_job_id = str(negotiation.get("followup_cron_job_id") or "").strip()
+            if cron is None:
+                return {
+                    "negotiation_id": negotiation_id,
+                    "status": negotiation["status"],
+                    "terminal": False,
+                    "ticked": False,
+                    "worked": False,
+                    "repair_required": True,
+                    "reason": "timer_id_required",
+                }
+            if legacy_job_id:
+                try:
+                    _delete_cron_job(cron, legacy_job_id)
+                except Exception:
+                    pass
+            migrated = ensure_negotiation_followup_cron(
+                negotiation_id=negotiation_id,
+                store=store,
+                cron=cron,
+                schedule="every 2m",
+                kanban=kanban,
+            )
+            _record_negotiation_event_safely(
+                store=store,
+                negotiation_id=negotiation_id,
+                event_type="FOLLOWUP_LEGACY_CRON_MIGRATED",
+                actor_type="system",
+                actor_id="meeting-time-negotiator",
+                payload={
+                    "legacy_cron_job_id": legacy_job_id,
+                    "new_cron_job_id": migrated.get("followup_cron_job_id"),
+                    "next_followup_at": migrated.get("next_followup_at"),
+                },
+            )
+            return {
+                "negotiation_id": negotiation_id,
+                "status": negotiation["status"],
+                "terminal": False,
+                "ticked": False,
+                "worked": False,
+                "migrated_legacy_cron": True,
+                "followup_cron_metadata": migrated,
+            }
+
+        from agents.timer_occurrence import TimerOccurrenceStore
+
+        timer_store = TimerOccurrenceStore(store.path)
+        occurrence = timer_store.get(timer_id)
+        if (
+            occurrence is None
+            or occurrence.workflow_type != "meeting_negotiation"
+            or occurrence.workflow_id != negotiation_id
+            or occurrence.purpose != "followup_reminder"
+        ):
+            return {
+                "negotiation_id": negotiation_id,
+                "status": negotiation["status"],
+                "terminal": False,
+                "ticked": False,
+                "worked": False,
+                "repair_required": True,
+                "reason": "invalid_timer_occurrence",
+            }
+        if occurrence.state == "ACCEPTED":
+            return {
+                "negotiation_id": negotiation_id,
+                "status": negotiation["status"],
+                "terminal": _negotiation_is_terminal(negotiation),
+                "ticked": False,
+                "worked": False,
+                "duplicate_timer_delivery": True,
+                "timer_id": timer_id,
+            }
+        if occurrence.state == "CANCELLED":
+            return {
+                "negotiation_id": negotiation_id,
+                "status": negotiation["status"],
+                "terminal": _negotiation_is_terminal(negotiation),
+                "ticked": False,
+                "worked": False,
+                "cancelled_timer_delivery": True,
+                "timer_id": timer_id,
+            }
+
         _record_negotiation_event_safely(
             store=store,
             negotiation_id=negotiation_id,
@@ -1900,12 +2446,12 @@ def negotiation_followup_cron_tick(
                 or 3
             )
 
-        reminders_sent = 0
-        reminders_failed = 0
+        reminder_specs: list[dict[str, Any]] = []
         for participant in store.list_negotiation_participants(negotiation_id):
             if not _followup_reminder_needed(participant):
                 continue
-            if int(participant.get("followup_count") or 0) >= max_followups:
+            followup_count = int(participant.get("followup_count") or 0)
+            if followup_count >= max_followups:
                 continue
             if not _followup_due(participant, interval_minutes=interval_minutes):
                 continue
@@ -1913,26 +2459,35 @@ def negotiation_followup_cron_tick(
             target_id = str(participant.get("message_user_id") or attendee_user_id)
             if not target_id:
                 continue
-            message = _reminder_payload(participant)
-            provider_result: Any = {}
-            try:
-                provider_result = client.send_attendee_message(
-                    attendee_open_ids=[target_id],
-                    message=message,
-                )
-                if not isinstance(provider_result, dict):
-                    provider_result = {}
-            except Exception as exc:
-                provider_result = {"failed": [str(exc)]}
-            delivered = provider_result.get("delivered") if isinstance(provider_result, dict) else None
-            failed = provider_result.get("failed") if isinstance(provider_result, dict) else None
-            if delivered:
-                store.record_negotiation_followup_attempt(
-                    negotiation_id,
-                    attendee_user_id=attendee_user_id,
-                    status="sent",
-                    error_detail=None,
-                )
+            reminder_specs.append(
+                {
+                    "attendee_user_id": attendee_user_id,
+                    "target_id": target_id,
+                    "message": _reminder_payload(participant),
+                    "semantic_round": followup_count + 1,
+                }
+            )
+
+        admitted_effects = _admit_native_followup_effects(
+            negotiation_id=negotiation_id,
+            timer_id=timer_id,
+            store=store,
+            specs=reminder_specs,
+        )
+        timer_store.mark_accepted(timer_id=timer_id)
+
+        reminders_sent = 0
+        reminders_failed = 0
+        reminder_effect_results: list[dict[str, Any]] = []
+        for item in admitted_effects:
+            effect_result = _dispatch_native_followup_effect(
+                negotiation_id=negotiation_id,
+                store=store,
+                client=client,
+                item=item,
+            )
+            reminder_effect_results.append(effect_result)
+            if effect_result.get("state") == "COMPLETED":
                 reminders_sent += 1
                 _record_negotiation_event_safely(
                     store=store,
@@ -1941,47 +2496,65 @@ def negotiation_followup_cron_tick(
                     actor_type="system",
                     actor_id="meeting-time-negotiator",
                     payload={
-                        "attendee_user_id": attendee_user_id,
-                        "target_id": target_id,
+                        "attendee_user_id": item["attendee_user_id"],
+                        "target_id": item["target_id"],
+                        "effect_id": item["effect_id"],
+                        "provider_message_id": effect_result.get("provider_message_id"),
+                        "domain_applied": bool(effect_result.get("applied")),
                     },
                 )
-                continue
-            store.record_negotiation_followup_attempt(
-                negotiation_id,
-                attendee_user_id=attendee_user_id,
-                status="failed",
-                error_detail=json.dumps(failed, ensure_ascii=False, sort_keys=True)
-                if failed
-                else None,
-            )
-            reminders_failed += 1
-            _record_negotiation_event_safely(
-                store=store,
-                negotiation_id=negotiation_id,
-                event_type="FOLLOWUP_REMINDER_FAILED",
-                actor_type="system",
-                actor_id="meeting-time-negotiator",
-                payload={
-                    "attendee_user_id": attendee_user_id,
-                    "target_id": target_id,
-                },
-            )
+            else:
+                reminders_failed += 1
+                _record_negotiation_event_safely(
+                    store=store,
+                    negotiation_id=negotiation_id,
+                    event_type="FOLLOWUP_REMINDER_PENDING_OR_FAILED",
+                    actor_type="system",
+                    actor_id="meeting-time-negotiator",
+                    payload={
+                        "attendee_user_id": item["attendee_user_id"],
+                        "target_id": item["target_id"],
+                        "effect_id": item["effect_id"],
+                        "effect_state": effect_result.get("state"),
+                        "reconciliation": effect_result.get("reconciliation"),
+                    },
+                )
 
         now = datetime.now(timezone.utc)
-        post_status = "active"
+        post_status = "paused"
         post_failure_count = None
+        next_followup_at: str | None = None
+        next_followup_job_id: str | None = None
+        remaining_followup = any(
+            _followup_reminder_needed(participant)
+            and int(participant.get("followup_count") or 0) < max_followups
+            for participant in store.list_negotiation_participants(negotiation_id)
+        )
         if cron_stale:
             post_status = "repair_required"
             post_failure_count = (
                 int(negotiation.get("followup_cron_failure_count") or 0) + 1
             )
+        elif remaining_followup and cron is not None:
+            rearmed = ensure_negotiation_followup_cron(
+                negotiation_id=negotiation_id,
+                store=store,
+                cron=cron,
+                schedule=f"every {max(interval_minutes, 1)}m",
+                kanban=kanban,
+            )
+            next_followup_at = str(rearmed.get("next_followup_at") or "").strip() or None
+            next_followup_job_id = (
+                str(rearmed.get("followup_cron_job_id") or "").strip() or None
+            )
+            post_status = str(rearmed.get("followup_cron_status") or "active")
         post_tick_kwargs = {
             "followup_cron_last_tick_at": now.isoformat().replace("+00:00", "Z"),
             "followup_cron_status": post_status,
-            "next_followup_at": (now + timedelta(minutes=interval_minutes))
-            .isoformat()
-            .replace("+00:00", "Z"),
+            "next_followup_at": next_followup_at,
         }
+        if next_followup_job_id is not None:
+            post_tick_kwargs["followup_cron_job_id"] = next_followup_job_id
         if post_failure_count is not None:
             post_tick_kwargs["followup_cron_failure_count"] = post_failure_count
         post_tick = store.set_negotiation_followup_cron_metadata(
@@ -2468,10 +3041,19 @@ def submit_negotiation_reply(
     slot_payload = _reply_slot_payload(payload)
     if negotiation["status"] == "pending_decliner_input":
         if slot_payload is None:
+            continuation = _admit_clarification_continuation(
+                negotiation=negotiation,
+                accepted_message=accepted,
+                participant_user_id=participant_user_id,
+                payload=payload,
+                reason="missing_normalized_slot",
+                store=store,
+            )
             return reply_result(
                 message_event_id=accepted["message_event_id"],
                 clarification_required=True,
                 reason="missing_normalized_slot",
+                **continuation,
             )
         slot = store.add_candidate_slot(
             negotiation_id,
@@ -2532,10 +3114,19 @@ def submit_negotiation_reply(
         vote_value == "no" and slot_payload is not None
     ):
         if slot_payload is None:
+            continuation = _admit_clarification_continuation(
+                negotiation=negotiation,
+                accepted_message=accepted,
+                participant_user_id=participant_user_id,
+                payload=payload,
+                reason="missing_alternative_slot",
+                store=store,
+            )
             return reply_result(
                 message_event_id=accepted["message_event_id"],
                 clarification_required=True,
                 reason="missing_alternative_slot",
+                **continuation,
             )
         next_round = int(negotiation["current_round"] or 0) + 1
         if next_round > int(negotiation["max_rounds"] or 1):
@@ -2580,10 +3171,19 @@ def submit_negotiation_reply(
         )
 
     if vote_value not in {"yes", "no"} or not slot_id:
+        continuation = _admit_clarification_continuation(
+            negotiation=negotiation,
+            accepted_message=accepted,
+            participant_user_id=participant_user_id,
+            payload=payload,
+            reason="missing_vote_or_slot",
+            store=store,
+        )
         return reply_result(
             message_event_id=accepted["message_event_id"],
             clarification_required=True,
             reason="missing_vote_or_slot",
+            **continuation,
         )
     vote = store.record_vote(
         negotiation_id=negotiation_id,

@@ -1583,6 +1583,161 @@ class MeetingCoordinatorStore:
         )
         return dict(row)
 
+    def reserve_native_followup_effect(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        negotiation_id: str,
+        attendee_user_id: str,
+        target_id: str,
+        message: str,
+        semantic_round: int,
+    ) -> dict[str, Any]:
+        message_event_id = _hash_id(
+            "out",
+            [
+                "meeting_time_followup_effect:v1",
+                negotiation_id,
+                attendee_user_id,
+                semantic_round,
+            ],
+            length=32,
+        )
+        now = utc_now_iso()
+        payload = {
+            "text": message,
+            "target_id": target_id,
+            "semantic_round": semantic_round,
+        }
+        try:
+            conn.execute(
+                """
+                INSERT INTO meeting_time_negotiation_messages(
+                    message_event_id, negotiation_id, direction,
+                    participant_user_id, message_channel, message_id,
+                    message_type, payload_json, agent_trace_ref, created_at
+                ) VALUES (?, ?, 'outbound', ?, 'feishu', NULL,
+                          'followup_reminder', ?, NULL, ?)
+                """,
+                (
+                    message_event_id,
+                    negotiation_id,
+                    attendee_user_id,
+                    _json(payload),
+                    now,
+                ),
+            )
+            reserved = True
+        except sqlite3.IntegrityError:
+            reserved = False
+        row = conn.execute(
+            """
+            SELECT * FROM meeting_time_negotiation_messages
+            WHERE message_event_id=?
+            """,
+            (message_event_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("followup outbound reservation missing")
+        return {"reserved": reserved, "message": dict(row)}
+
+    def get_native_followup_message(
+        self,
+        *,
+        negotiation_id: str,
+        attendee_user_id: str,
+        semantic_round: int,
+    ) -> dict[str, Any] | None:
+        message_event_id = _hash_id(
+            "out",
+            [
+                "meeting_time_followup_effect:v1",
+                negotiation_id,
+                attendee_user_id,
+                semantic_round,
+            ],
+            length=32,
+        )
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM meeting_time_negotiation_messages
+                WHERE message_event_id=?
+                """,
+                (message_event_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def complete_native_followup_effect(
+        self,
+        *,
+        negotiation_id: str,
+        attendee_user_id: str,
+        message_event_id: str,
+        provider_message_id: str,
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT message_id FROM meeting_time_negotiation_messages
+                WHERE message_event_id=? AND negotiation_id=?
+                  AND participant_user_id=? AND direction='outbound'
+                """,
+                (message_event_id, negotiation_id, attendee_user_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(message_event_id)
+            existing = str(row["message_id"] or "").strip()
+            normalized = str(provider_message_id or "").strip()
+            if not normalized:
+                raise ValueError("provider_message_id is required")
+            applied = False
+            if not existing:
+                conn.execute(
+                    """
+                    UPDATE meeting_time_negotiation_messages
+                    SET message_id=?
+                    WHERE message_event_id=? AND message_id IS NULL
+                    """,
+                    (normalized, message_event_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE meeting_time_negotiation_participants
+                    SET followup_count=followup_count + 1,
+                        last_followup_at=?, updated_at=?
+                    WHERE negotiation_id=? AND attendee_user_id=?
+                    """,
+                    (now, now, negotiation_id, attendee_user_id),
+                )
+                applied = True
+            elif existing != normalized:
+                raise ValueError("provider_message_id conflicts with completed followup")
+            participant = conn.execute(
+                """
+                SELECT * FROM meeting_time_negotiation_participants
+                WHERE negotiation_id=? AND attendee_user_id=?
+                """,
+                (negotiation_id, attendee_user_id),
+            ).fetchone()
+            if participant is None:
+                raise KeyError(f"{negotiation_id}:{attendee_user_id}")
+        return {"applied": applied, "participant": dict(participant)}
+
+    def negotiation_event_count(
+        self, negotiation_id: str, *, conn: sqlite3.Connection | None = None
+    ) -> int:
+        if conn is not None:
+            return int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM meeting_time_negotiation_events WHERE negotiation_id=?",
+                    (negotiation_id,),
+                ).fetchone()[0]
+            )
+        with self._connect() as owned:
+            return self.negotiation_event_count(negotiation_id, conn=owned)
+
     def record_negotiation_followup_attempt(
         self,
         negotiation_id: str,
@@ -2982,9 +3137,9 @@ class MeetingCoordinatorStore:
         )
         now = utc_now_iso()
         with self._connect() as conn:
-            conn.execute(
+            inserted = conn.execute(
                 """
-                INSERT INTO meeting_time_negotiation_messages(
+                INSERT OR IGNORE INTO meeting_time_negotiation_messages(
                     message_event_id, negotiation_id, direction,
                     participant_user_id, message_channel, message_id,
                     message_type, payload_json, agent_trace_ref, created_at
@@ -3000,18 +3155,19 @@ class MeetingCoordinatorStore:
                     _json(payload),
                     now,
                 ),
-            )
-            self._record_negotiation_event(
-                conn,
-                negotiation_id=negotiation_id,
-                event_type="INBOUND_ACCEPTED",
-                actor_type="participant",
-                actor_id=participant_user_id,
-                payload={
-                    "message_event_id": message_event_id,
-                    "message_id": message_id,
-                },
-            )
+            ).rowcount
+            if inserted:
+                self._record_negotiation_event(
+                    conn,
+                    negotiation_id=negotiation_id,
+                    event_type="INBOUND_ACCEPTED",
+                    actor_type="participant",
+                    actor_id=participant_user_id,
+                    payload={
+                        "message_event_id": message_event_id,
+                        "message_id": message_id,
+                    },
+                )
             row = conn.execute(
                 "SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?",
                 (message_event_id,),
