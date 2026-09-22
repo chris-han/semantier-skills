@@ -110,6 +110,8 @@ def negotiation_task_metadata(
         record.get("followup_cron_failure_count"), 0
     )
     metadata["terminal_authority"] = _to_text(record.get("terminal_authority"))
+    metadata["finalize_status"] = _to_text(record.get("finalize_status"), "not_started")
+    metadata["finalize_attempt_id"] = _to_text(record.get("finalize_attempt_id"))
     metadata["terminal_at"] = _to_text(record.get("terminal_at"))
     metadata["terminal_reason"] = _to_text(record.get("terminal_reason"))
     metadata["terminal_event_revision_id"] = _to_text(
@@ -208,6 +210,7 @@ def negotiation_detail(
         "candidate_slots": active_store.list_candidate_slots(negotiation_id),
         "votes": active_store.list_negotiation_votes(negotiation_id),
         "messages": active_store.list_negotiation_messages(negotiation_id),
+        "finalize_attempts": active_store.list_finalize_attempts(negotiation_id),
         "events": active_store.list_negotiation_events(negotiation_id),
     }
 

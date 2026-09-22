@@ -10,6 +10,11 @@ platforms:
 webapi:
   enabled: true
   module: feishu_meeting_coordinator.webapi
+workflows:
+  - id: feishu-meeting-coordinator
+    label: Feishu Meeting Coordinator
+    schema_version: workflow_definition.v1
+    definition: ./workflows/meeting-negotiation.workflow.yaml
 ui_extensions:
   - id: feishu_meeting_negotiation
     host_screen: skills

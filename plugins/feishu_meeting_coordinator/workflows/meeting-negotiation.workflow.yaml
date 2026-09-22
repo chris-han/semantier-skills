@@ -1,0 +1,127 @@
+schema_version: workflow_definition.v1
+workflow_id: feishu-meeting-coordinator
+workflow_version: "1"
+owner_ref: skill:feishu_meeting_coordinator
+topology: dag
+
+nodes:
+  - id: observe_meeting_event
+    kind: observe
+    label: Observe meeting / decline event
+  - id: ensure_negotiation_case
+    kind: compute
+    label: Ensure negotiation case
+  - id: ensure_kanban_task
+    kind: effect
+    label: Ensure meeting coordinator task
+    refs:
+      effect_contract_ref: feishu.meeting.kanban.ensure
+  - id: ensure_followup_timer
+    kind: effect
+    label: Ensure follow-up timer
+    refs:
+      effect_contract_ref: feishu.meeting.followup.ensure
+  - id: poll_rsvp
+    kind: observe
+    label: Poll RSVP / persisted state
+  - id: collect_candidate_slots
+    kind: compute
+    label: Collect availability / candidate slots
+  - id: collect_votes
+    kind: wait
+    label: Collect votes
+  - id: evaluate_terminal_authority
+    kind: decide
+    label: Evaluate terminal authority
+    refs:
+      decision_ref: feishu.meeting.terminal_authority
+  - id: requester_decision
+    kind: human_gate
+    label: Requester decision
+    refs:
+      authority_ref: feishu.meeting.requester
+  - id: wait_followup
+    kind: wait
+    label: Wait / follow-up occurrence
+  - id: finalize_meeting
+    kind: effect
+    label: Finalize meeting
+    refs:
+      effect_contract_ref: feishu.meeting.finalize
+  - id: cancel_meeting
+    kind: effect
+    label: Cancel negotiation
+    refs:
+      effect_contract_ref: feishu.meeting.cancel
+  - id: terminal
+    kind: terminal
+    label: Terminal
+
+edges:
+  - id: event_to_case
+    source: observe_meeting_event
+    target: ensure_negotiation_case
+    transition_class: normal
+  - id: case_to_task
+    source: ensure_negotiation_case
+    target: ensure_kanban_task
+    transition_class: normal
+  - id: task_to_timer
+    source: ensure_kanban_task
+    target: ensure_followup_timer
+    transition_class: normal
+  - id: timer_to_poll
+    source: ensure_followup_timer
+    target: poll_rsvp
+    transition_class: normal
+  - id: poll_to_slots
+    source: poll_rsvp
+    target: collect_candidate_slots
+    transition_class: normal
+  - id: slots_to_votes
+    source: collect_candidate_slots
+    target: collect_votes
+    transition_class: normal
+  - id: votes_to_authority
+    source: collect_votes
+    target: evaluate_terminal_authority
+    transition_class: conditional
+    condition_ref: vote_or_rsvp_state_changed
+  - id: authority_to_finalize
+    source: evaluate_terminal_authority
+    target: finalize_meeting
+    transition_class: conditional
+    condition_ref: terminal_authority_consented
+  - id: authority_to_requester
+    source: evaluate_terminal_authority
+    target: requester_decision
+    transition_class: escalation
+    condition_ref: terminal_authority_requester_decision
+  - id: authority_to_wait
+    source: evaluate_terminal_authority
+    target: wait_followup
+    transition_class: retry
+    condition_ref: terminal_authority_blocked
+  - id: requester_to_finalize
+    source: requester_decision
+    target: finalize_meeting
+    transition_class: conditional
+    condition_ref: requester_selected_slot
+  - id: requester_to_cancel
+    source: requester_decision
+    target: cancel_meeting
+    transition_class: conditional
+    condition_ref: requester_cancelled
+  - id: wait_to_terminal
+    source: wait_followup
+    target: terminal
+    transition_class: conditional
+    condition_ref: occurrence_suspended_until_next_runtime_tick
+  - id: finalize_to_terminal
+    source: finalize_meeting
+    target: terminal
+    transition_class: normal
+  - id: cancel_to_terminal
+    source: cancel_meeting
+    target: terminal
+    transition_class: normal

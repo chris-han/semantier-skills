@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+from feishu_meeting_coordinator.dashboard.plugin_api import negotiation_detail
 from feishu_meeting_coordinator.store import MeetingCoordinatorStore
 
 
@@ -186,6 +187,29 @@ def test_plugin_store_backfills_negotiation_session_id_from_payload(
     reloaded = MeetingCoordinatorStore(store.path)
 
     assert reloaded.get_negotiation(negotiation["negotiation_id"])["session_id"] == "sess_1"
+
+
+def test_negotiation_detail_exposes_finalize_evidence_for_workflow_projection(
+    store: MeetingCoordinatorStore,
+):
+    monitor = store.start_monitor(_monitor_payload())
+    negotiation = store.create_or_get_negotiation_case(
+        monitor_id=monitor["monitor_id"],
+        event_revision_id=monitor["event_revision_id"],
+        trigger_attendee_user_id="ou_a",
+        session_id="sess_1",
+    )
+
+    detail = negotiation_detail(
+        negotiation_id=negotiation["negotiation_id"],
+        workspace_id="ws_1",
+        store=store,
+    )
+
+    assert detail["negotiation"]["metadata"]["finalize_status"] == "not_started"
+    assert detail["negotiation"]["metadata"]["finalize_attempt_id"] == ""
+    assert detail["finalize_attempts"] == []
+    assert isinstance(detail["events"], list)
 
 
 def test_plugin_store_creates_merged_negotiation_case(store: MeetingCoordinatorStore):
