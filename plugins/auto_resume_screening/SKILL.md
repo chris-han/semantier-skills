@@ -24,7 +24,7 @@ Use `extract_resume_text` only when the user asks for text extraction from a sin
 
 Use `extract_role_terms` only when maintaining or auditing the role-title negative filter. It fetches the configured occupation index pages and returns terms missing from the current plugin heuristic; it does not screen resumes or update source files by itself.
 
-Supported resume formats are `.pdf`, `.docx`, `.md`, and `.txt`. PDF extraction uses deterministic `pypdfium2` embedded-text extraction only; OCR is intentionally not used by default.
+Supported resume formats are `.pdf`, `.docx`, `.md`, and `.txt`. PDF/DOCX extraction uses the host-owned governed AgenticPDF document-extraction boundary; this plugin does not own a PDF/DOCX parser or fallback. OCR is intentionally not used by default.
 
 Do not use terminal, generated Python, ad hoc HTTP, unmanaged files, prompt memory, or user self-claims as substitutes for the registered tool surface. If the tool surface is not loaded, stop and report that the `auto_resume_screening` plugin must be installed or enabled in the active workspace.
 

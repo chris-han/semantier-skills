@@ -5,11 +5,9 @@ import json
 import os
 import re
 import unicodedata
-import zipfile
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
-from xml.etree import ElementTree
 
 SUPPORTED_EXTENSIONS = (".docx", ".pdf", ".md", ".txt")
 _WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -254,41 +252,20 @@ def extract_candidate_name(text: str) -> str | None:
     return None
 
 
-def _read_docx(path: Path) -> str:
-    with zipfile.ZipFile(path) as archive:
-        raw = archive.read("word/document.xml")
-    root = ElementTree.fromstring(raw)
-    paragraphs: list[str] = []
-    for paragraph in root.iter(f"{_WORD_NS}p"):
-        chunks = [node.text or "" for node in paragraph.iter(f"{_WORD_NS}t")]
-        text = "".join(chunks).strip()
-        if text:
-            paragraphs.append(text)
-    return "\n".join(paragraphs)
-
-
-def _read_pdf(path: Path) -> str:
+def _read_born_digital_document(path: Path) -> str:
+    """Project canonical extraction through the host-owned AgenticPDF adapter."""
     try:
-        import pypdfium2 as pdfium
+        from plugins.document_extraction.parsers import agenticpdf
     except ImportError as exc:
         raise RuntimeError(
-            "PDF_EXTRACTION_DEPENDENCY_MISSING: pypdfium2 is required for PDF extraction"
+            "DOCUMENT_EXTRACTION_CAPABILITY_MISSING: host AgenticPDF document extraction is required"
         ) from exc
-
-    doc = pdfium.PdfDocument(str(path))
-    try:
-        pages: list[str] = []
-        for page_idx in range(len(doc)):
-            page = doc[page_idx]
-            text = page.get_textpage().get_text_range().strip()
-            if text:
-                pages.append(text)
-        return "\n".join(pages)
-    finally:
-        close = getattr(doc, "close", None)
-        if callable(close):
-            close()
-
+    parsed = agenticpdf.parse(path, allow_ocr=False, language_hints=[])
+    return "\n".join(
+        str(block.get("text") or "").strip()
+        for block in parsed.get("blocks", [])
+        if str(block.get("text") or "").strip()
+    )
 
 def _session_env(name: str) -> str:
     try:
@@ -558,10 +535,8 @@ def extract_text_from_resume(path: Path) -> dict[str, Any]:
             "extension": extension,
         }
     try:
-        if extension == ".docx":
-            raw_text = _read_docx(resolved)
-        elif extension == ".pdf":
-            raw_text = _read_pdf(resolved)
+        if extension in {".docx", ".pdf"}:
+            raw_text = _read_born_digital_document(resolved)
         else:
             raw_text = resolved.read_text(encoding="utf-8")
     except RuntimeError as exc:
@@ -579,7 +554,7 @@ def extract_text_from_resume(path: Path) -> dict[str, Any]:
         "source_path": str(resolved),
         "filename": resolved.name,
         "extension": extension,
-        "extraction_method": "pypdfium2_text" if extension == ".pdf" else "native_text",
+        "extraction_method": "agenticpdf" if extension in {".pdf", ".docx"} else "native_text",
         "char_count": len(text),
         "text_sha256": _sha256_text(text),
         "candidate_name": candidate_name,
