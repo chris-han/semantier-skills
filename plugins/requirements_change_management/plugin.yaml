@@ -1,0 +1,19 @@
+name: requirements_change_management
+display_name: Requirements Change Management
+version: "0.1.0"
+description: Bounded requirements authoring, comparison, impact and review workflow over core ChangeCandidate/requirements-owner authority.
+author: Semantier
+kind: standalone
+platforms: [linux, macos, windows]
+platform_compatibility: [cli, api_server, acp]
+capability_contract:
+  schema_version: semantier.plugin_capabilities.v1
+  capabilities:
+    inspect_requirements: controlled
+    propose_change: controlled
+    submit_review: controlled
+    publish_baseline: controlled
+    approve: deny
+    admit: deny
+    activate: deny
+    change_authority_binding: deny
