@@ -253,14 +253,14 @@ def extract_candidate_name(text: str) -> str | None:
 
 
 def _read_born_digital_document(path: Path) -> str:
-    """Project canonical extraction through the host-owned AgenticPDF adapter."""
+    """Project canonical extraction through the qualified native document provider."""
     try:
-        from plugins.document_extraction.parsers import agenticpdf
+        from plugins.document_extraction.parsers import ooxml, pymupdf_native
     except ImportError as exc:
         raise RuntimeError(
-            "DOCUMENT_EXTRACTION_CAPABILITY_MISSING: host AgenticPDF document extraction is required"
+            "DOCUMENT_EXTRACTION_CAPABILITY_MISSING: host native document extraction is required"
         ) from exc
-    parsed = agenticpdf.parse(path, allow_ocr=False, language_hints=[])
+    parsed = (pymupdf_native if path.suffix.lower() == ".pdf" else ooxml).parse(path, allow_ocr=False, language_hints=[])
     return "\n".join(
         str(block.get("text") or "").strip()
         for block in parsed.get("blocks", [])
@@ -554,7 +554,7 @@ def extract_text_from_resume(path: Path) -> dict[str, Any]:
         "source_path": str(resolved),
         "filename": resolved.name,
         "extension": extension,
-        "extraction_method": "agenticpdf" if extension in {".pdf", ".docx"} else "native_text",
+        "extraction_method": ("pymupdf" if extension == ".pdf" else "ooxml") if extension in {".pdf", ".docx"} else "native_text",
         "char_count": len(text),
         "text_sha256": _sha256_text(text),
         "candidate_name": candidate_name,
