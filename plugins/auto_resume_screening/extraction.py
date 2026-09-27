@@ -252,20 +252,48 @@ def extract_candidate_name(text: str) -> str | None:
     return None
 
 
-def _read_born_digital_document(path: Path) -> str:
-    """Project canonical extraction through the qualified native document provider."""
+def _governed_document_ref(path: Path) -> str:
+    uploads_root = _session_uploads_root()
+    if uploads_root is None:
+        raise RuntimeError(
+            "SESSION_UPLOADS_CONTEXT_REQUIRED: active workspace/session context is required for PDF/DOCX extraction"
+        )
+    resolved = path.resolve()
     try:
-        from plugins.document_extraction.parsers import ooxml, pymupdf_native
+        relative = resolved.relative_to(uploads_root.resolve())
+    except ValueError as exc:
+        raise RuntimeError(
+            "GOVERNED_RESUME_UPLOAD_REQUIRED: PDF/DOCX resumes must be active-session governed uploads"
+        ) from exc
+    return f"uploads/{relative.as_posix()}"
+
+
+def _read_born_digital_document(path: Path) -> tuple[str, str]:
+    """Delegate binary document extraction to the governed host service boundary."""
+    try:
+        from plugins.document_extraction.service import extract_live
     except ImportError as exc:
         raise RuntimeError(
-            "DOCUMENT_EXTRACTION_CAPABILITY_MISSING: host native document extraction is required"
+            "DOCUMENT_EXTRACTION_CAPABILITY_MISSING: host document_extraction service is required"
         ) from exc
-    parsed = (pymupdf_native if path.suffix.lower() == ".pdf" else ooxml).parse(path, allow_ocr=False, language_hints=[])
-    return "\n".join(
+    result = extract_live(
+        {
+            "document_ref": _governed_document_ref(path),
+            "allow_ocr": False,
+            "language_hints": [],
+        }
+    )
+    document = result.get("document")
+    if not isinstance(document, dict):
+        raise RuntimeError("DOCUMENT_EXTRACTION_INVALID_RESULT: canonical document missing")
+    text = "\n".join(
         str(block.get("text") or "").strip()
-        for block in parsed.get("blocks", [])
+        for block in document.get("blocks", [])
         if str(block.get("text") or "").strip()
     )
+    parser = result.get("parser") if isinstance(result.get("parser"), dict) else {}
+    method = str(parser.get("method") or "document_extraction")
+    return text, method
 
 def _session_env(name: str) -> str:
     try:
@@ -535,8 +563,9 @@ def extract_text_from_resume(path: Path) -> dict[str, Any]:
             "extension": extension,
         }
     try:
+        extraction_method = "native_text"
         if extension in {".docx", ".pdf"}:
-            raw_text = _read_born_digital_document(resolved)
+            raw_text, extraction_method = _read_born_digital_document(resolved)
         else:
             raw_text = resolved.read_text(encoding="utf-8")
     except RuntimeError as exc:
@@ -554,7 +583,7 @@ def extract_text_from_resume(path: Path) -> dict[str, Any]:
         "source_path": str(resolved),
         "filename": resolved.name,
         "extension": extension,
-        "extraction_method": ("pymupdf" if extension == ".pdf" else "ooxml") if extension in {".pdf", ".docx"} else "native_text",
+        "extraction_method": extraction_method,
         "char_count": len(text),
         "text_sha256": _sha256_text(text),
         "candidate_name": candidate_name,
