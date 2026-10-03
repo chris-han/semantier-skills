@@ -87,6 +87,9 @@ GUARDED_NEGOTIATION_PATCH_FIELDS = {
     "creator_user_id",
     "status",
     "created_at",
+    "organization_id",
+    "workflow_binding_json",
+    "workflow_binding_hash",
 }
 
 
@@ -523,6 +526,21 @@ class MeetingCoordinatorStore:
             self._remove_negotiation_process_control_columns(
                 conn, columns=negotiation_columns
             )
+            # Historical rows remain explicitly unbound and cannot issue receipts.
+            current_columns = {row['name'] for row in conn.execute('PRAGMA table_info(meeting_time_negotiations)')}
+            for name in ('organization_id', 'workflow_binding_json', 'workflow_binding_hash'):
+                if name not in current_columns:
+                    conn.execute(f'ALTER TABLE meeting_time_negotiations ADD COLUMN {name} TEXT')
+            conn.executescript("""
+                CREATE TRIGGER IF NOT EXISTS meeting_workflow_binding_immutable
+                BEFORE UPDATE OF organization_id, workspace_id, workflow_binding_json, workflow_binding_hash
+                ON meeting_time_negotiations
+                WHEN OLD.workflow_binding_json IS NOT NEW.workflow_binding_json
+                  OR OLD.workflow_binding_hash IS NOT NEW.workflow_binding_hash
+                  OR OLD.organization_id IS NOT NEW.organization_id
+                  OR (OLD.workflow_binding_json IS NOT NULL AND OLD.workspace_id IS NOT NEW.workspace_id)
+                BEGIN SELECT RAISE(ABORT, 'WORKFLOW_INSTANCE_REBINDING_FORBIDDEN'); END;
+            """)
             conn.executescript(
                 """
                 DROP INDEX IF EXISTS idx_meeting_time_negotiations_scheduler_heal;
@@ -1545,6 +1563,54 @@ class MeetingCoordinatorStore:
             raise KeyError(negotiation_id)
         return dict(row)
 
+    def select_finalization_workflow_transition(
+        self, negotiation_id: str, *, decision_source: str, actor_id: str
+    ) -> bool:
+        """Select the pinned controller after native consent/decision verification."""
+        from contracts.workflow_execution import hash_value, verify_meeting_binding
+        case = self.get_negotiation(negotiation_id)
+        if not case.get("workflow_binding_json"):
+            # Historical cases remain outside definition-driven qualification.
+            return True
+        binding = json.loads(case["workflow_binding_json"])
+        verify_meeting_binding(binding, organization_id=case["organization_id"],
+                               workspace_id=case["workspace_id"])
+        if hash_value(binding) != case["workflow_binding_hash"]:
+            raise ValueError("WORKFLOW_INSTANCE_BINDING_HASH_MISMATCH")
+        requester = decision_source == "requester_final_decision"
+        source = "requester_decision" if requester else "evaluate_terminal_authority"
+        edge_ref = "requester_to_finalize" if requester else "authority_to_finalize"
+        controller = next((c for c in binding["execution"]["controllers"]
+                           if c["edgeRef"] == edge_ref), None)
+        if controller is None or controller["sourceRef"] != source or controller["targetRef"] != "finalize_meeting":
+            raise ValueError("WORKFLOW_EXECUTION_CONTROLLER_UNAVAILABLE")
+        operator = next((op for op in binding["execution"]["operators"]
+                         if op["nodeRef"] == "finalize_meeting"), None)
+        if operator is None or operator["operatorKind"] != "effect":
+            raise ValueError("WORKFLOW_EXECUTION_BINDING_UNAVAILABLE")
+        # These facts are native persisted state, never caller success/simulation flags.
+        predicates = {
+            "terminal_authority_consented": case["status"] == "consented",
+            "terminal_authority_blocked": case["status"] not in {"consented", "requester_decided"},
+            "requester_selected_slot": requester and case["status"] == "requester_decided",
+        }
+        condition = controller.get("conditionRef")
+        if condition not in predicates:
+            raise ValueError("WORKFLOW_EXECUTION_CONDITION_UNAVAILABLE")
+        selected = predicates[condition]
+        self.record_negotiation_event(
+            negotiation_id=negotiation_id,
+            event_type="WORKFLOW_TRANSITION_SELECTED" if selected else "WORKFLOW_TRANSITION_BLOCKED",
+            actor_type="workflow_runtime", actor_id=actor_id,
+            payload={"nodeRef": source, "controllerRef": edge_ref,
+                     "targetRef": controller["targetRef"], "conditionRef": condition,
+                     "conditionSatisfied": selected, "workflowHash": binding["workflowHash"],
+                     "executionHash": binding["executionHash"],
+                     "activationHash": binding["activationHash"],
+                     "organizationId": case["organization_id"], "workspaceId": case["workspace_id"]},
+        )
+        return selected
+
     def set_negotiation_kanban_task(
         self,
         negotiation_id: str,
@@ -2408,9 +2474,22 @@ class MeetingCoordinatorStore:
         event_revision_id: str,
         trigger_attendee_user_id: str,
         session_id: str | None = None,
+        workflow_binding: dict[str, Any] | None = None,
+        runtime_context=None,
     ) -> dict[str, Any]:
+        from contracts.workflow_execution import verify_meeting_binding, hash_value
+        if runtime_context is not None:
+            if not runtime_context.authenticated:
+                raise ValueError('authentication required')
+            if workflow_binding is None:
+                raise ValueError('WORKFLOW_BINDING_REQUIRED')
+        if workflow_binding is not None:
+            if runtime_context is None:
+                raise ValueError('WORKFLOW_AUTHENTICATED_CONTEXT_REQUIRED')
+            verify_meeting_binding(workflow_binding, organization_id=runtime_context.organization_id, workspace_id=runtime_context.workspace_id)
         now = utc_now_iso()
         with self._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
             monitor_row = conn.execute(
                 "SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?",
                 (monitor_id,),
@@ -2418,6 +2497,8 @@ class MeetingCoordinatorStore:
             if monitor_row is None:
                 raise KeyError(monitor_id)
             monitor = dict(monitor_row)
+            if runtime_context is not None and monitor['workspace_id'] != runtime_context.workspace_id:
+                raise ValueError('WORKFLOW_SCOPE_MISMATCH')
             payload = json.loads(str(monitor.get("payload_json") or "{}"))
             resolved_session_id = str(
                 session_id or payload.get("session_id") or ""
@@ -2458,12 +2539,13 @@ class MeetingCoordinatorStore:
                         creator_delivery_binding_json, payload_json,
                         last_agent_error, failure_reason, created_at, updated_at,
                         completed_at, kanban_task_id, expires_at_utc, finalize_status,
-                        finalize_attempt_id, trigger_attendee_user_ids_json
+                        finalize_attempt_id, trigger_attendee_user_ids_json,
+                        organization_id, workflow_binding_json, workflow_binding_hash
                     )
                     VALUES (
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_decliner_input',
                         0, 5, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL,
-                        ?, ?, NULL, NULL, ?, 'not_started', NULL, ?
+                        ?, ?, NULL, NULL, ?, 'not_started', NULL, ?, ?, ?, ?
                     )
                     """,
                     (
@@ -2488,6 +2570,9 @@ class MeetingCoordinatorStore:
                             created_at=now, original_start_time=start_time
                         ),
                         _json(trigger_ids),
+                        runtime_context.organization_id if workflow_binding else None,
+                        _json(workflow_binding) if workflow_binding else None,
+                        hash_value(workflow_binding) if workflow_binding else None,
                     ),
                 )
                 self._record_negotiation_event(
@@ -2505,6 +2590,10 @@ class MeetingCoordinatorStore:
                 )
             else:
                 negotiation_id = existing_row["negotiation_id"]
+                if workflow_binding is not None and (existing_row['workflow_binding_hash'] != hash_value(workflow_binding) or json.loads(existing_row['workflow_binding_json'] or 'null') != workflow_binding):
+                    raise ValueError('WORKFLOW_INSTANCE_REBINDING_FORBIDDEN')
+                if runtime_context is not None and (existing_row['organization_id'] != runtime_context.organization_id or existing_row['workspace_id'] != runtime_context.workspace_id):
+                    raise ValueError('WORKFLOW_SCOPE_MISMATCH')
                 if resolved_session_id and not existing_row["session_id"]:
                     conn.execute(
                         """

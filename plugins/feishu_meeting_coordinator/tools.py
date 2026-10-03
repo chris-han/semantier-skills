@@ -391,20 +391,9 @@ class _DefaultGateway:
 
     def negotiation_case_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        store = meeting_coordinator_store.MeetingCoordinatorStore()
-        negotiation = store.create_or_get_negotiation_case(
-            monitor_id=_text(payload.get("monitor_id")),
-            event_revision_id=_text(payload.get("event_revision_id")),
-            trigger_attendee_user_id=_text(payload.get("trigger_attendee_user_id")),
+        return meeting_coordinator_gateway.negotiation_case_start(
+            payload, store=meeting_coordinator_store.MeetingCoordinatorStore(), kanban=None,
         )
-        if payload.get("ensure_kanban") is not False:
-            negotiation = meeting_coordinator_gateway.ensure_negotiation_kanban_task(
-                negotiation_id=str(negotiation["negotiation_id"]),
-                store=store,
-                kanban=None,
-            )
-        return negotiation
 
     def negotiation_case_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()

@@ -1983,18 +1983,41 @@ def negotiation_case_start(
     *,
     store: MeetingCoordinatorStore,
     kanban: KanbanClient | None = None,
+    runtime_context=None,
 ) -> dict[str, Any]:
+    from contracts.workflow_execution import read_active_meeting_binding, meeting_context_from_execution_boundary
+    ctx = runtime_context or meeting_context_from_execution_boundary()
+    if not ctx.authenticated:
+        raise ValueError('authentication required')
+    monitor = store.get_monitor(_text(payload.get('monitor_id')))
+    if monitor['workspace_id'] != ctx.workspace_id:
+        raise ValueError('WORKFLOW_SCOPE_MISMATCH')
+    if monitor['creator_user_id'] != ctx.user_id:
+        raise PermissionError('WORKFLOW_ACTOR_IDENTITY_MISMATCH')
+    # A retried existing instance keeps its original immutable pins. The store
+    # resolves identity first; an ACTIVE successor never rebinds this instance.
+    existing = store.list_negotiations_for_monitor(_text(payload.get('monitor_id')))
+    existing = next((case for case in existing if case['event_revision_id'] == _text(payload.get('event_revision_id'))), None)
+    if existing is not None:
+        if not existing.get('workflow_binding_json'):
+            raise ValueError('WORKFLOW_LEGACY_INSTANCE_UNBOUND')
+        if existing.get('organization_id') != ctx.organization_id or existing['workspace_id'] != ctx.workspace_id:
+            raise ValueError('WORKFLOW_SCOPE_MISMATCH')
+        binding = json.loads(existing['workflow_binding_json'])
+    else:
+        # Body-provided scope, pins and success/simulation claims are not read.
+        binding = read_active_meeting_binding(ctx)
     negotiation = store.create_or_get_negotiation_case(
-        monitor_id=_text(payload.get("monitor_id")),
-        event_revision_id=_text(payload.get("event_revision_id")),
-        trigger_attendee_user_id=_text(payload.get("trigger_attendee_user_id")),
-        session_id=_text(payload.get("session_id")) or None,
+        monitor_id=_text(payload.get('monitor_id')),
+        event_revision_id=_text(payload.get('event_revision_id')),
+        trigger_attendee_user_id=_text(payload.get('trigger_attendee_user_id')),
+        session_id=_text(payload.get('session_id')) or None,
+        workflow_binding=binding,
+        runtime_context=ctx,
     )
-    if payload.get("ensure_kanban") is not False:
+    if payload.get('ensure_kanban') is not False:
         return ensure_negotiation_kanban_task(
-            negotiation_id=str(negotiation["negotiation_id"]),
-            store=store,
-            kanban=kanban,
+            negotiation_id=str(negotiation['negotiation_id']), store=store, kanban=kanban,
         )
     return negotiation
 
@@ -3468,6 +3491,14 @@ def finalize_negotiation_case(
                 decision_source=decision_source,
                 requested_by_user_id=requested_by_user_id,
             )
+
+        if not store.select_finalization_workflow_transition(
+            negotiation_id, decision_source=decision_source, actor_id=owner
+        ):
+            return _finalize_return({
+                "attempt": None, "calendar_update_called": False,
+                "reason": "WORKFLOW_TRANSITION_BLOCKED",
+            })
 
         update_payload = {
             "event_id": negotiation["event_id"],

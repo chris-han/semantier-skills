@@ -23,6 +23,8 @@ router = APIRouter(tags=["webapi-gateway"])
 
 ROUTE_POLICY_MAP = {
     ("POST", "/callbacks/feishu/meeting-coordinator/reply"): "public",
+    ("GET", "/system/meeting-coordinator/workflow-binding"): "authenticated",
+    ("POST", "/system/meeting-coordinator/negotiations/start"): "authenticated",
     ("GET", "/system/meeting-coordinator/monitors"): "authenticated",
     ("GET", "/system/meeting-coordinator/negotiations"): "authenticated",
     ("GET", "/system/meeting-coordinator/negotiations/{negotiation_id}"): "authenticated",
@@ -217,6 +219,34 @@ async def system_meeting_coordinator_monitors(request: Request):
         ),
         "scheduler": store.get_workspace_state(ctx.workspace_id),
     }
+
+
+@router.get("/system/meeting-coordinator/workflow-binding")
+async def system_meeting_coordinator_workflow_binding(request: Request):
+    from contracts.workflow_execution import read_active_meeting_binding
+    ctx = request_context_from_request(request)
+    if not ctx.authenticated:
+        raise HTTPException(status_code=401, detail='authentication required')
+    try:
+        return read_active_meeting_binding(ctx)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/system/meeting-coordinator/negotiations/start")
+async def system_meeting_coordinator_negotiation_start(request: Request):
+    ctx = request_context_from_request(request)
+    if not ctx.authenticated:
+        raise HTTPException(status_code=401, detail='authentication required')
+    body = await request.json()
+    try:
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        result = meeting_coordinator_gateway.negotiation_case_start(body, store=store, runtime_context=ctx)
+        return {'ok': True, 'negotiation':result}
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/system/meeting-coordinator/negotiations")
