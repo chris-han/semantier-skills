@@ -2258,6 +2258,13 @@ class MeetingCoordinatorStore:
                 return True
         return False
 
+    def has_followup_cron_ownership(self, negotiation_id: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute(
+                'SELECT 1 FROM meeting_time_negotiation_followup_crons WHERE negotiation_id=? LIMIT 1',
+                (negotiation_id,),
+            ).fetchone() is not None
+
     def release_followup_cron_ownership(
         self,
         negotiation_id: str,

@@ -3426,15 +3426,6 @@ def finalize_negotiation_case(
             "reason": "tick_lock_not_acquired",
         }
 
-    _record_negotiation_event_safely(
-        store=store,
-        negotiation_id=negotiation_id,
-        event_type="FINALIZE_STARTED",
-        actor_type="requester",
-        actor_id=owner,
-        payload={"decision_source": decision_source, "selected_slot_id": selected_slot_id},
-    )
-
     try:
         def _finalize_return(values: dict[str, Any]) -> dict[str, Any]:
             _sync_negotiation_kanban_task_body(
@@ -3443,6 +3434,31 @@ def finalize_negotiation_case(
                 kanban=kanban,
             )
             return values
+
+        def _successful_finalize_return(attempt: dict[str, Any]) -> dict[str, Any]:
+            finalization = {
+                "attempt": attempt,
+                "calendar_update_called": False,
+                "idempotent": True,
+            }
+            current = store.get_negotiation(negotiation_id)
+            if current.get('workflow_binding_json') and not current.get('followup_cron_job_id') and not store.has_followup_cron_ownership(negotiation_id):
+                return _finalize_return(finalization)
+            stop_result = _stop_followup_cron_if_terminal(
+                negotiation_id=negotiation_id,
+                store=store,
+                cron=cron,
+                kanban=kanban,
+                owner_profile=owner,
+                reason="finalize_idempotent",
+                terminal_authority=owner,
+                terminal_reason="finalize_idempotent",
+                terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
+            )
+            if stop_result:
+                finalization["followup_cron_stopped"] = True
+                finalization["followup_cron_stop"] = stop_result
+            return _finalize_return(finalization)
 
         keep_original = False
         slot: dict[str, Any] = {}
@@ -3492,6 +3508,36 @@ def finalize_negotiation_case(
                 requested_by_user_id=requested_by_user_id,
             )
 
+        update_payload = {
+            "event_id": negotiation["event_id"],
+            "calendar_id": negotiation["calendar_id"],
+            "start_time": slot["start_time"],
+            "end_time": slot["end_time"],
+            "timezone": slot["timezone"],
+        }
+        if negotiation.get('workflow_binding_json'):
+            completed = next((attempt for attempt in store.list_finalize_attempts(negotiation_id)
+                if attempt['status'] == 'calendar_update_succeeded'
+                and attempt['selected_slot_id'] == selected_slot_id
+                and attempt['decision_source'] == decision_source
+                and attempt['event_revision_id'] == negotiation['event_revision_id']
+                and json.loads(attempt['calendar_update_payload_json']) == update_payload), None)
+            if completed:
+                native = store.read_workflow_execution(negotiation_id)
+                effect = {'attempt_id':completed['finalize_attempt_id'], 'result':json.loads(completed['calendar_update_result_json'])}
+                if native['result']['execution_disposition'] != 'terminal' or effect not in native['result']['effects']:
+                    raise ValueError('WORKFLOW_FINALIZATION_HISTORY_MISMATCH')
+                return _successful_finalize_return(completed)
+
+        _record_negotiation_event_safely(
+            store=store,
+            negotiation_id=negotiation_id,
+            event_type="FINALIZE_STARTED",
+            actor_type="requester",
+            actor_id=owner,
+            payload={"decision_source": decision_source, "selected_slot_id": selected_slot_id},
+        )
+
         if not store.select_finalization_workflow_transition(
             negotiation_id, decision_source=decision_source, actor_id=owner
         ):
@@ -3500,13 +3546,6 @@ def finalize_negotiation_case(
                 "reason": "WORKFLOW_TRANSITION_BLOCKED",
             })
 
-        update_payload = {
-            "event_id": negotiation["event_id"],
-            "calendar_id": negotiation["calendar_id"],
-            "start_time": slot["start_time"],
-            "end_time": slot["end_time"],
-            "timezone": slot["timezone"],
-        }
         attempt = store.create_finalize_attempt(
             negotiation_id=negotiation_id,
             selected_slot_id=selected_slot_id,
@@ -3518,26 +3557,7 @@ def finalize_negotiation_case(
             negotiation_id, attempt["finalize_attempt_id"]
         )
         if attempt["status"] == "calendar_update_succeeded":
-            finalization = {
-                "attempt": attempt,
-                "calendar_update_called": False,
-                "idempotent": True,
-            }
-            stop_result = _stop_followup_cron_if_terminal(
-                negotiation_id=negotiation_id,
-                store=store,
-                cron=cron,
-                kanban=kanban,
-                owner_profile=owner,
-                reason="finalize_idempotent",
-                terminal_authority=owner,
-                terminal_reason="finalize_idempotent",
-                terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
-            )
-            if stop_result:
-                finalization["followup_cron_stopped"] = True
-                finalization["followup_cron_stop"] = stop_result
-            return _finalize_return(finalization)
+            return _successful_finalize_return(attempt)
 
         if attempt["status"] == "calendar_update_started":
             return _finalize_return({
