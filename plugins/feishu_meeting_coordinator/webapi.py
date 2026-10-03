@@ -277,13 +277,23 @@ async def system_meeting_coordinator_negotiation_detail(
         negotiation = store.get_negotiation_for_workspace(
             negotiation_id,
             workspace_id=ctx.workspace_id,
+            organization_id=ctx.organization_id,
         )
     except KeyError as exc:
         raise HTTPException(
             status_code=404, detail="not_found_or_wrong_workspace"
         ) from exc
+    workflow_execution = None
+    if negotiation.get('workflow_binding_json'):
+        if negotiation.get('organization_id') != ctx.organization_id:
+            raise HTTPException(status_code=404, detail='not_found_or_wrong_workspace')
+        try:
+            workflow_execution = store.read_workflow_execution(negotiation_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
         "ok": True,
+        "workflow_execution": workflow_execution,
         "negotiation": negotiation,
         "participants": store.list_negotiation_participants(negotiation_id),
         "candidate_slots": store.list_candidate_slots(negotiation_id),
@@ -307,6 +317,7 @@ async def system_meeting_coordinator_negotiation_run(
         negotiation_record = store.get_negotiation_for_workspace(
             negotiation_id,
             workspace_id=ctx.workspace_id,
+            organization_id=ctx.organization_id,
         )
     except KeyError as exc:
         raise HTTPException(
@@ -341,6 +352,7 @@ async def system_meeting_coordinator_negotiation_reply(
         negotiation = store.get_negotiation_for_workspace(
             negotiation_id,
             workspace_id=ctx.workspace_id,
+            organization_id=ctx.organization_id,
         )
     except KeyError as exc:
         raise HTTPException(
@@ -451,6 +463,7 @@ async def system_meeting_coordinator_negotiation_finalize(
         negotiation_record = store.get_negotiation_for_workspace(
             negotiation_id,
             workspace_id=ctx.workspace_id,
+            organization_id=ctx.organization_id,
         )
         _require_negotiation_operator(negotiation_record, user_id=ctx.user_id)
         result = meeting_coordinator_gateway.finalize_negotiation_case(
@@ -489,6 +502,7 @@ async def system_meeting_coordinator_negotiation_cancel(
         negotiation_record = store.get_negotiation_for_workspace(
             negotiation_id,
             workspace_id=ctx.workspace_id,
+            organization_id=ctx.organization_id,
         )
     except KeyError as exc:
         raise HTTPException(
@@ -533,6 +547,7 @@ async def plugins_meeting_coordinator_negotiation_requester_decision(
         negotiation_record = store.get_negotiation_for_workspace(
             negotiation_id,
             workspace_id=ctx.workspace_id,
+            organization_id=ctx.organization_id,
         )
     except KeyError as exc:
         raise HTTPException(

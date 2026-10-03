@@ -3719,6 +3719,8 @@ def finalize_negotiation_case(
         return _finalize_return(result_payload)
     finally:
         store.release_negotiation_case_lock(negotiation_id, owner=owner)
+        if negotiation.get('workflow_binding_json'):
+            store.seal_workflow_execution(negotiation_id)
 
 
 def _deliver_creator_task(

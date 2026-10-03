@@ -526,6 +526,42 @@ class MeetingCoordinatorStore:
             self._remove_negotiation_process_control_columns(
                 conn, columns=negotiation_columns
             )
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS meeting_workflow_execution_receipts (
+                    receipt_hash TEXT PRIMARY KEY,
+                    negotiation_id TEXT NOT NULL,
+                    event_count INTEGER NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    UNIQUE(negotiation_id,event_count)
+                );
+                CREATE TRIGGER IF NOT EXISTS meeting_receipt_no_update BEFORE UPDATE ON meeting_workflow_execution_receipts
+                BEGIN SELECT RAISE(ABORT, 'WORKFLOW_RECEIPT_IMMUTABLE'); END;
+                CREATE TRIGGER IF NOT EXISTS meeting_receipt_no_delete BEFORE DELETE ON meeting_workflow_execution_receipts
+                BEGIN SELECT RAISE(ABORT, 'WORKFLOW_RECEIPT_IMMUTABLE'); END;
+            """)
+            event_columns = {row['name'] for row in conn.execute('PRAGMA table_info(meeting_time_negotiation_events)')}
+            if 'event_sequence' not in event_columns:
+                conn.execute('ALTER TABLE meeting_time_negotiation_events ADD COLUMN event_sequence INTEGER')
+                # Legacy rows are unqualified; preserve their actual insertion order.
+                conn.execute("""
+                    WITH ordered AS (
+                        SELECT rowid AS native_rowid,
+                               ROW_NUMBER() OVER (PARTITION BY negotiation_id ORDER BY rowid) AS sequence
+                        FROM meeting_time_negotiation_events
+                    )
+                    UPDATE meeting_time_negotiation_events
+                    SET event_sequence=(SELECT sequence FROM ordered WHERE native_rowid=meeting_time_negotiation_events.rowid)
+                """)
+            conn.executescript("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_native_event_sequence
+                ON meeting_time_negotiation_events(negotiation_id, event_sequence);
+                CREATE TRIGGER IF NOT EXISTS meeting_native_event_no_update
+                BEFORE UPDATE ON meeting_time_negotiation_events
+                BEGIN SELECT RAISE(ABORT, 'WORKFLOW_EVENT_HISTORY_IMMUTABLE'); END;
+                CREATE TRIGGER IF NOT EXISTS meeting_native_event_no_delete
+                BEFORE DELETE ON meeting_time_negotiation_events
+                BEGIN SELECT RAISE(ABORT, 'WORKFLOW_EVENT_HISTORY_IMMUTABLE'); END;
+            """)
             # Historical rows remain explicitly unbound and cannot issue receipts.
             current_columns = {row['name'] for row in conn.execute('PRAGMA table_info(meeting_time_negotiations)')}
             for name in ('organization_id', 'workflow_binding_json', 'workflow_binding_hash'):
@@ -1443,6 +1479,36 @@ class MeetingCoordinatorStore:
         kanban_run_id: int | None = None,
     ) -> dict[str, Any]:
         now = utc_now_iso()
+        event_sequence = conn.execute(
+            'SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM meeting_time_negotiation_events WHERE negotiation_id=?',
+            (negotiation_id,),
+        ).fetchone()[0]
+        case = conn.execute('SELECT organization_id,workspace_id,workflow_binding_json,workflow_binding_hash FROM meeting_time_negotiations WHERE negotiation_id=?', (negotiation_id,)).fetchone()
+        if case and case['workflow_binding_json']:
+            from contracts.workflow_execution import hash_value, verify_meeting_binding
+            binding = json.loads(case['workflow_binding_json'])
+            verify_meeting_binding(binding, organization_id=case['organization_id'],workspace_id=case['workspace_id'])
+            if hash_value(binding) != case['workflow_binding_hash']:
+                raise ValueError('WORKFLOW_INSTANCE_BINDING_HASH_MISMATCH')
+            payload = {**payload, 'workflowBindingHash':case['workflow_binding_hash'], 'organizationId':case['organization_id'], 'workspaceId':case['workspace_id']}
+            node = {'CASE_CREATED':'ensure_negotiation_case', 'SLOT_PROPOSED':'collect_candidate_slots', 'VOTE_RECORDED':'collect_votes', 'CALENDAR_UPDATE_STARTED':'finalize_meeting', 'CALENDAR_UPDATE_FAILED':'finalize_meeting', 'CALENDAR_UPDATE_SUCCEEDED':'finalize_meeting'}.get(event_type)
+            if node:
+                if node not in {op['nodeRef'] for op in binding['execution']['operators']}:
+                    raise ValueError('WORKFLOW_EXECUTION_BINDING_UNAVAILABLE')
+                payload = {**payload, 'nodeRef':node, 'nodeStatus':{'CALENDAR_UPDATE_STARTED':'running','CALENDAR_UPDATE_FAILED':'failed'}.get(event_type,'completed')}
+            transition = {
+                'CASE_CREATED': ('event_to_case','observe_meeting_event','ensure_negotiation_case',None,'completed'),
+                'SLOT_PROPOSED': ('slots_to_votes','collect_candidate_slots','collect_votes',None,'waiting'),
+                'VOTE_RECORDED': ('votes_to_authority','collect_votes','evaluate_terminal_authority','vote_or_rsvp_state_changed','ready'),
+            }.get(event_type)
+            if transition:
+                edge_ref, source, target, condition, target_status = transition
+                controller = next((c for c in binding['execution']['controllers'] if c['edgeRef'] == edge_ref),None)
+                if not controller or controller['sourceRef'] != source or controller['targetRef'] != target or controller.get('conditionRef') != condition:
+                    raise ValueError('WORKFLOW_EXECUTION_CONTROLLER_UNAVAILABLE')
+                payload = {**payload, 'nodeRef':source, 'nodeStatus':'completed', 'controllerRef':edge_ref,
+                           'targetRef':target, 'targetStatus':target_status, 'conditionRef':condition,
+                           'conditionSatisfied':True, 'transitionOutcome':'selected'}
         payload_json = _json(payload)
         payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         event_id = _hash_id(
@@ -1455,6 +1521,7 @@ class MeetingCoordinatorStore:
                 actor_id,
                 payload_hash,
                 now,
+                str(event_sequence),
             ],
             length=32,
         )
@@ -1463,9 +1530,9 @@ class MeetingCoordinatorStore:
             INSERT INTO meeting_time_negotiation_events(
                 event_id, negotiation_id, event_type, actor_type, actor_id,
                 prior_state, next_state, prior_state_version, next_state_version,
-                kanban_task_id, kanban_run_id, payload_hash, payload_json, created_at
+                kanban_task_id, kanban_run_id, payload_hash, payload_json, created_at, event_sequence
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -1482,6 +1549,7 @@ class MeetingCoordinatorStore:
                 payload_hash,
                 payload_json,
                 now,
+                event_sequence,
             ),
         )
         row = conn.execute(
@@ -1506,6 +1574,7 @@ class MeetingCoordinatorStore:
         kanban_run_id: int | None = None,
     ) -> dict[str, Any]:
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
                 (negotiation_id,),
@@ -1577,6 +1646,9 @@ class MeetingCoordinatorStore:
                                workspace_id=case["workspace_id"])
         if hash_value(binding) != case["workflow_binding_hash"]:
             raise ValueError("WORKFLOW_INSTANCE_BINDING_HASH_MISMATCH")
+        terminal_controller = next((c for c in binding['execution']['controllers'] if c['edgeRef'] == 'finalize_to_terminal'), None)
+        if not terminal_controller or terminal_controller['sourceRef'] != 'finalize_meeting' or terminal_controller['targetRef'] != 'terminal' or terminal_controller.get('conditionRef'):
+            raise ValueError('WORKFLOW_TERMINAL_CONTROLLER_UNAVAILABLE')
         requester = decision_source == "requester_final_decision"
         source = "requester_decision" if requester else "evaluate_terminal_authority"
         edge_ref = "requester_to_finalize" if requester else "authority_to_finalize"
@@ -2366,11 +2438,57 @@ class MeetingCoordinatorStore:
                 """
                 SELECT * FROM meeting_time_negotiation_events
                 WHERE negotiation_id=?
-                ORDER BY created_at, event_id
+                ORDER BY event_sequence
                 """,
                 (negotiation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def read_workflow_execution(self, negotiation_id: str) -> dict[str, Any]:
+        """Read the pinned native projection; retrieval never emits a receipt."""
+        from contracts.workflow_execution import replay_meeting_execution, hash_value
+        with self._connect() as conn:
+            conn.execute('BEGIN')
+            case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',(negotiation_id,)).fetchone()
+            if not case:
+                raise KeyError(negotiation_id)
+            if not case['workflow_binding_json']:
+                raise ValueError('WORKFLOW_LEGACY_INSTANCE_UNBOUND')
+            binding = json.loads(case['workflow_binding_json'])
+            if binding['organizationId'] != case['organization_id'] or binding['workspaceId'] != case['workspace_id'] or hash_value(binding) != case['workflow_binding_hash']:
+                raise ValueError('WORKFLOW_INSTANCE_BINDING_HASH_MISMATCH')
+            events = [dict(row) for row in conn.execute('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence',(negotiation_id,))]
+            projection = replay_meeting_execution(binding=binding,instance_id=negotiation_id,events=events)
+            sealed = conn.execute('SELECT evidence_json FROM meeting_workflow_execution_receipts WHERE negotiation_id=? AND event_count=?',(negotiation_id,len(events))).fetchone()
+            receipt = json.loads(sealed['evidence_json'])['receipt'] if sealed else None
+            if receipt:
+                replay_meeting_execution(binding=binding,instance_id=negotiation_id,events=events,receipt=receipt)
+        return {'binding':binding, **projection, 'receipt':receipt}
+
+    def seal_workflow_execution(self, negotiation_id: str) -> dict[str, Any]:
+        """Seal a native owner snapshot; no caller-supplied claims or artifacts."""
+        from contracts.workflow_execution import replay_meeting_execution, meeting_execution_receipt, hash_value
+        with self._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',(negotiation_id,)).fetchone()
+            if not case:
+                raise KeyError(negotiation_id)
+            if not case['workflow_binding_json']:
+                raise ValueError('WORKFLOW_LEGACY_INSTANCE_UNBOUND')
+            binding = json.loads(case['workflow_binding_json'])
+            if binding['organizationId'] != case['organization_id'] or binding['workspaceId'] != case['workspace_id'] or hash_value(binding) != case['workflow_binding_hash']:
+                raise ValueError('WORKFLOW_INSTANCE_BINDING_HASH_MISMATCH')
+            events = [dict(row) for row in conn.execute('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence',(negotiation_id,))]
+            projection = replay_meeting_execution(binding=binding,instance_id=negotiation_id,events=events)
+            receipt = meeting_execution_receipt(binding=binding,instance_id=negotiation_id,events=events,projection=projection)
+            evidence = {'binding':binding, 'events':events, **projection, 'receipt':receipt}
+            prior = conn.execute('SELECT evidence_json FROM meeting_workflow_execution_receipts WHERE negotiation_id=? AND event_count=?',(negotiation_id,len(events))).fetchone()
+            if prior:
+                if json.loads(prior['evidence_json']) != evidence:
+                    raise ValueError('WORKFLOW_RECEIPT_IMMUTABILITY_VIOLATION')
+            else:
+                conn.execute('INSERT INTO meeting_workflow_execution_receipts VALUES (?,?,?,?)',(receipt['receipt_hash'],negotiation_id,len(events),_json(evidence)))
+        return evidence
 
     def list_negotiation_messages(self, negotiation_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -3708,7 +3826,7 @@ class MeetingCoordinatorStore:
                 event_type="CALENDAR_UPDATE_SUCCEEDED",
                 actor_type="system",
                 actor_id="meeting-finalizer",
-                payload={"finalize_attempt_id": finalize_attempt_id},
+                payload={"finalize_attempt_id": finalize_attempt_id, "effectResult":result},
             )
         return dict(row)
 
@@ -3802,6 +3920,7 @@ class MeetingCoordinatorStore:
         negotiation_id: str,
         *,
         workspace_id: str,
+        organization_id: str | None = None,
     ) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
@@ -3811,6 +3930,6 @@ class MeetingCoordinatorStore:
                 """,
                 (negotiation_id, workspace_id),
             ).fetchone()
-        if row is None:
+        if row is None or (row["workflow_binding_json"] and row["organization_id"] != organization_id):
             raise KeyError(negotiation_id)
         return dict(row)
