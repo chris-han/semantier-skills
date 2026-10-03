@@ -21,6 +21,11 @@ def _parse_utc_iso(value: str | None) -> datetime | None:
 
 
 def _db_path() -> Path:
+    from gateway.execution_boundary import current_execution_boundary
+    boundary = current_execution_boundary()
+    if boundary is not None and boundary.audit_metadata.get('authority_source') == 'semantier_authenticated_context':
+        from contracts.workflow_execution import meeting_context_from_execution_boundary
+        return _store_path_for_context(meeting_context_from_execution_boundary())
     root = (
         Path(os.environ.get("SEMANTIER_LOCAL_STATE_DIR") or ".semantier-home")
         .expanduser()
@@ -91,6 +96,37 @@ GUARDED_NEGOTIATION_PATCH_FIELDS = {
     "workflow_binding_json",
     "workflow_binding_hash",
 }
+
+
+def _store_path_for_context(ctx) -> Path:
+    """Authenticated IO uses the governed workspace, never process scratch state."""
+    if not ctx.authenticated or not ctx.workspace_id or ctx.workspace_id == 'public':
+        raise ValueError('WORKFLOW_AUTHENTICATED_CONTEXT_REQUIRED')
+    root = Path(ctx.workspace_root).resolve()
+    home = Path(ctx.hermes_home).resolve()
+    if not home.is_relative_to(root):
+        raise ValueError('WORKFLOW_PATH_OUTSIDE_WORKSPACE')
+    path = (home / 'state.db').resolve()
+    if not path.is_relative_to(root):
+        raise ValueError('WORKFLOW_PATH_OUTSIDE_WORKSPACE')
+    return path
+
+
+def store_for_context(ctx) -> "MeetingCoordinatorStore":
+    return MeetingCoordinatorStore(_store_path_for_context(ctx))
+
+
+def store_for_workspace(workspace_id: str) -> "MeetingCoordinatorStore":
+    """Channel adapters pass only a verified governed workspace binding."""
+    from agents.gateway_identity import ensure_workspace_paths
+    if not workspace_id or workspace_id == 'public':
+        raise ValueError('WORKFLOW_SCOPE_REQUIRED')
+    root, home = ensure_workspace_paths(workspace_id)
+    root, home = root.resolve(), home.resolve()
+    path = (home / 'state.db').resolve()
+    if not home.is_relative_to(root) or not path.is_relative_to(root):
+        raise ValueError('WORKFLOW_PATH_OUTSIDE_WORKSPACE')
+    return MeetingCoordinatorStore(path)
 
 
 class MeetingCoordinatorStore:

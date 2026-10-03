@@ -177,7 +177,7 @@ async def feishu_meeting_coordinator_reply_callback(request: Request):
     try:
         result = meeting_coordinator_gateway.submit_negotiation_reply(
             envelope,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
+            store=meeting_coordinator_store.store_for_workspace(str(config['workspace_id'])),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -201,7 +201,7 @@ async def system_meeting_coordinator_monitors(request: Request):
     ctx = request_context_from_request(request)
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="authentication required")
-    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    store = meeting_coordinator_store.store_for_context(ctx)
     meeting_coordinator_gateway.repair_delivery_retry_scheduler(
         workspace_id=ctx.workspace_id,
         store=store,
@@ -240,7 +240,7 @@ async def system_meeting_coordinator_negotiation_start(request: Request):
         raise HTTPException(status_code=401, detail='authentication required')
     body = await request.json()
     try:
-        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        store = meeting_coordinator_store.store_for_context(ctx)
         result = meeting_coordinator_gateway.negotiation_case_start(body, store=store, runtime_context=ctx)
         return {'ok': True, 'negotiation':result}
     except PermissionError as exc:
@@ -254,7 +254,7 @@ async def system_meeting_coordinator_negotiations(request: Request):
     ctx = request_context_from_request(request)
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="authentication required")
-    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    store = meeting_coordinator_store.store_for_context(ctx)
     return {
         "ok": True,
         "negotiations": store.list_operation_negotiations(
@@ -272,7 +272,7 @@ async def system_meeting_coordinator_negotiation_detail(
     ctx = request_context_from_request(request)
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="authentication required")
-    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    store = meeting_coordinator_store.store_for_context(ctx)
     try:
         negotiation = store.get_negotiation_for_workspace(
             negotiation_id,
@@ -312,7 +312,7 @@ async def system_meeting_coordinator_negotiation_run(
     ctx = request_context_from_request(request)
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="authentication required")
-    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    store = meeting_coordinator_store.store_for_context(ctx)
     try:
         negotiation_record = store.get_negotiation_for_workspace(
             negotiation_id,
@@ -347,7 +347,7 @@ async def system_meeting_coordinator_negotiation_reply(
     participant_user_id = str(
         body.get("participant_user_id") or ctx.user_id or ""
     ).strip()
-    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    store = meeting_coordinator_store.store_for_context(ctx)
     try:
         negotiation = store.get_negotiation_for_workspace(
             negotiation_id,
@@ -458,7 +458,7 @@ async def system_meeting_coordinator_negotiation_finalize(
     body = await request.json()
     if body.get("requester_confirmation") is not True:
         raise HTTPException(status_code=403, detail="requester_confirmation_required")
-    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    store = meeting_coordinator_store.store_for_context(ctx)
     try:
         negotiation_record = store.get_negotiation_for_workspace(
             negotiation_id,
@@ -497,7 +497,7 @@ async def system_meeting_coordinator_negotiation_cancel(
     ctx = request_context_from_request(request)
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="authentication required")
-    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    store = meeting_coordinator_store.store_for_context(ctx)
     try:
         negotiation_record = store.get_negotiation_for_workspace(
             negotiation_id,
@@ -542,7 +542,7 @@ async def plugins_meeting_coordinator_negotiation_requester_decision(
     action = str(body.get("action") or "").strip()
     if not action:
         raise HTTPException(status_code=400, detail="action is required")
-    store = meeting_coordinator_store.MeetingCoordinatorStore()
+    store = meeting_coordinator_store.store_for_context(ctx)
     try:
         negotiation_record = store.get_negotiation_for_workspace(
             negotiation_id,
@@ -582,7 +582,7 @@ async def system_meeting_coordinator_settings(request: Request):
     ctx = request_context_from_request(request)
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="authentication required")
-    state = meeting_coordinator_store.MeetingCoordinatorStore().get_workspace_state(
+    state = meeting_coordinator_store.store_for_context(ctx).get_workspace_state(
         ctx.workspace_id
     )
     return {
@@ -606,7 +606,7 @@ async def system_meeting_coordinator_settings_update(request: Request):
             status_code=400, detail="max_followups must be an integer"
         ) from exc
     try:
-        state = meeting_coordinator_store.MeetingCoordinatorStore().update_workspace_settings(
+        state = meeting_coordinator_store.store_for_context(ctx).update_workspace_settings(
             ctx.workspace_id,
             max_followups=max_followups,
         )
@@ -627,7 +627,7 @@ async def system_meeting_coordinator_delivery_retry(request: Request):
         raise HTTPException(status_code=401, detail="authentication required")
     result = meeting_coordinator_gateway.escalation_retry_tick(
         {"workspace_id": ctx.workspace_id},
-        store=meeting_coordinator_store.MeetingCoordinatorStore(),
+        store=meeting_coordinator_store.store_for_context(ctx),
         delivery_client=meeting_coordinator_delivery_client_from_context(ctx),
     )
     return {"ok": True, **result}
@@ -648,7 +648,7 @@ async def system_meeting_coordinator_delivery_task_requeue(
     task = meeting_coordinator_gateway.requeue_delivery_task(
         delivery_task_id=delivery_task_id,
         reason=reason,
-        store=meeting_coordinator_store.MeetingCoordinatorStore(),
+        store=meeting_coordinator_store.store_for_context(ctx),
         cron=MeetingCoordinatorWebApiCronClient(ctx),
     )
     return {"ok": True, "delivery_task": task}
