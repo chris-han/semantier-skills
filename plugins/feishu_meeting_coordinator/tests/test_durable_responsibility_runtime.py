@@ -228,6 +228,12 @@ def test_reply_wake_cancels_sibling_timer_before_resume(tmp_path):
         cron=cron,
     )
     assert reply["responsibility_wake"]["accepted"] is True
+    events_before_duplicate = store.list_negotiation_events(negotiation['negotiation_id'])
+    assert any(event['event_type'] == 'DECISION_FRONTIER_COMPUTED' for event in events_before_duplicate)
+    duplicate = runtime.wake_reply(negotiation_id=negotiation['negotiation_id'], message_id='reply_1')
+    assert duplicate.accepted is False
+    assert duplicate.reason == 'duplicate'
+    assert store.list_negotiation_events(negotiation['negotiation_id']) == events_before_duplicate
     assert TimerOccurrenceStore(store.path).get(timer_id).state == CANCELLED
     assert timer_job_id in cron.deleted
     current = runtime.responsibilities.get(item.responsibility_id)

@@ -46,7 +46,10 @@ def test_six_semantic_scenarios(scenario, tmp_path):
     if scenario == 'C':
         assert any(a['impact'] == 'MATERIAL' for s in run['steps'] if s['decision'] for a in s['decision']['informationActions'])
     if scenario == 'D':
-        assert not any(s['agentAction'] == 'ASK' and s['actorRef'] == run['participants'][-1]['participantRef'] for s in run['steps'])
+        optional = run['participants'][-1]['participantRef']
+        assert not any(action['action'] == 'ASK' and action['targetRef'] == optional
+                       for step in run['steps'] if step['decision']
+                       for action in step['decision']['informationActions'])
     if scenario == 'E':
         assert run['steps'][-1]['requesterChoice'] == 'CANCEL'
         assert run['steps'][-1]['effectState'] == 'SIMULATED_CANCELLED'
