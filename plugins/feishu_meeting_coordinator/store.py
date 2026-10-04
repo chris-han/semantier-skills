@@ -3463,7 +3463,9 @@ class MeetingCoordinatorStore:
                 "SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?",
                 (message_event_id,),
             ).fetchone()
-        return dict(row)
+        result = dict(row)
+        result["_inserted"] = bool(inserted)
+        return result
 
     def record_vote(
         self,

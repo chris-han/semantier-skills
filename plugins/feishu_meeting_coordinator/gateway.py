@@ -3146,6 +3146,36 @@ def submit_negotiation_reply(
             ),
         },
     )
+    inbound_inserted = bool(accepted.pop("_inserted", True))
+    if not inbound_inserted:
+        duplicate_result: dict[str, Any] = {
+            "accepted": True,
+            "duplicate": True,
+            "message_event_id": accepted["message_event_id"],
+            "responsibility_wake": {
+                "accepted": False,
+                "reason": "duplicate",
+                "wake_id": None,
+            },
+        }
+        for event in reversed(store.list_negotiation_events(negotiation_id)):
+            if event.get("event_type") != "CLARIFICATION_CONTINUATION_ADMITTED":
+                continue
+            try:
+                event_payload = json.loads(str(event.get("payload_json") or "{}"))
+            except json.JSONDecodeError:
+                continue
+            if str(event_payload.get("message_event_id") or "") != str(accepted["message_event_id"]):
+                continue
+            duplicate_result.update({
+                "clarification_required": True,
+                "reason": str(event_payload.get("reason") or "clarification_required"),
+                "continuation_admitted": False,
+                "continuation_scheduled": False,
+                "continuation_reason": "duplicate_or_terminal",
+            })
+            break
+        return duplicate_result
     kanban_wakeup = _kanban_comment_and_unblock_for_reply(
         negotiation=negotiation,
         accepted_message=accepted,
