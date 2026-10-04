@@ -329,3 +329,41 @@ def test_followup_cron_ownership_release_requires_owner_match(store: MeetingCoor
         owner_idempotency_key="keep-this",
         workspace_id=workspace_id,
     )
+
+
+def test_planning_events_preserve_history_and_reject_cross_revision(store):
+    from dataclasses import replace
+    from feishu_meeting_coordinator.decision_planning import MeetingDecisionPlanningBasis, form_decision_frontier
+    monitor = store.start_monitor(_monitor_payload())
+    case = store.create_or_get_negotiation_case(monitor_id=monitor['monitor_id'],
+        event_revision_id='rev_1', trigger_attendee_user_id='ou_a')
+    b = MeetingDecisionPlanningBasis(negotiation_id=case['negotiation_id'], event_revision_id='rev_1',
+        original_slot={'slot_id': 'original', 'start_time': case['original_start_time'], 'end_time': case['original_end_time']},
+        participants=())
+    first = form_decision_frontier(b)
+    event = store.record_decision_frontier(first)
+    assert store.latest_decision_frontier(case['negotiation_id'])['input_hash'] == first.input_hash
+    second = form_decision_frontier(replace(b, meeting_necessity='RESOLVED_ASYNCHRONOUSLY'))
+    store.record_decision_frontier(second)
+    events = [e for e in store.list_negotiation_events(case['negotiation_id']) if e['event_type'] == 'DECISION_FRONTIER_COMPUTED']
+    assert len(events) == 2
+    assert events[0]['event_id'] == event['event_id']
+    assert store.latest_decision_frontier(case['negotiation_id'])['input_hash'] == second.input_hash
+    with pytest.raises(ValueError, match='PLANNER_REVISION_MISMATCH'):
+        store.record_decision_frontier(form_decision_frontier(replace(b, event_revision_id='stale')))
+    assert len([e for e in store.list_negotiation_events(case['negotiation_id']) if e['event_type'] == 'DECISION_FRONTIER_COMPUTED']) == 2
+
+
+def test_planning_basis_uses_slot_specific_votes_and_original_rsvp(store):
+    monitor = store.start_monitor(_monitor_payload())
+    case = store.create_or_get_negotiation_case(monitor_id=monitor['monitor_id'],
+        event_revision_id='rev_1', trigger_attendee_user_id='ou_a')
+    slot = store.add_candidate_slot(case['negotiation_id'], proposed_by_user_id='ou_a', round_number=1,
+        start_time='2026-06-15T03:00:00Z', end_time='2026-06-15T03:30:00Z', timezone_name='UTC', source_text=None)
+    store.record_vote(negotiation_id=case['negotiation_id'], slot_id=slot['slot_id'], attendee_user_id='ou_b', vote='no')
+    basis = store.decision_planning_basis(case['negotiation_id'])
+    states = {(r['slot_id'], r['attendee_user_id']): r['status'] for r in basis.availability}
+    assert states[slot['slot_id'], 'ou_a'] == 'AVAILABLE'
+    assert states[slot['slot_id'], 'ou_b'] == 'UNAVAILABLE'
+    assert states['original', 'ou_b'] == 'UNKNOWN'
+    assert not any(p['role'] == 'requester' for p in basis.participants)

@@ -1671,6 +1671,74 @@ class MeetingCoordinatorStore:
                 kanban_run_id=kanban_run_id,
             )
 
+    def decision_planning_basis(self, negotiation_id: str):
+        """Reconstruct proposal inputs from the domain store in one read transaction."""
+        from .decision_planning import MeetingDecisionPlanningBasis
+        with self._connect() as conn:
+            conn.execute('BEGIN')
+            row = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', (negotiation_id,)).fetchone()
+            if row is None:
+                raise KeyError(negotiation_id)
+            case = dict(row)
+            participants = [dict(r) for r in conn.execute('SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? ORDER BY attendee_user_id', (negotiation_id,))]
+            participants = [p for p in participants if p['role'] != 'requester']
+            slots = [dict(r) for r in conn.execute("SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=? AND status!='superseded' ORDER BY slot_id", (negotiation_id,))]
+            votes = [dict(r) for r in conn.execute('SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=? ORDER BY created_at, vote_id', (negotiation_id,))]
+            rsvps = {r['attendee_user_id']: r['response_status'] for r in conn.execute('SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=?', (case['monitor_id'],))}
+            events = [dict(r) for r in conn.execute('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', (negotiation_id,))]
+            settings = conn.execute('SELECT max_followups FROM meeting_rsvp_workspace_state WHERE workspace_id=?', (case['workspace_id'],)).fetchone()
+        states = {}
+        for p in participants:
+            states['original', p['attendee_user_id']] = {'accepted': 'AVAILABLE', 'declined': 'UNAVAILABLE'}.get(rsvps.get(p['attendee_user_id']), 'UNKNOWN')
+        for slot in slots:
+            states[slot['slot_id'], slot['proposed_by_user_id']] = 'AVAILABLE'
+        for vote in votes:
+            states[vote['slot_id'], vote['attendee_user_id']] = {'yes': 'AVAILABLE', 'no': 'UNAVAILABLE', 'propose_alternative': 'UNAVAILABLE'}.get(vote['vote'], 'UNKNOWN')
+        payload = json.loads(case['payload_json'] or '{}')
+        return MeetingDecisionPlanningBasis(negotiation_id=negotiation_id,
+            event_revision_id=case['event_revision_id'],
+            original_slot={'slot_id': 'original', 'start_time': case['original_start_time'], 'end_time': case['original_end_time']},
+            participants=tuple(participants), candidate_slots=tuple(slots),
+            availability=tuple({'slot_id': s, 'attendee_user_id': p, 'status': v} for (s, p), v in sorted(states.items())),
+            followup_counts=tuple((p['attendee_user_id'], int(p.get('followup_count') or 0)) for p in participants),
+            max_followups=int(settings['max_followups']) if settings else DEFAULT_MAX_FOLLOWUPS,
+            meeting_necessity=str(payload.get('meeting_necessity') or 'UNKNOWN'),
+            basis_refs=tuple(e['event_id'] for e in events if e['event_type'] not in ('DECISION_FRONTIER_COMPUTED', 'INFORMATION_ACTION_SELECTED', 'DECISION_FRONTIER_PRESENTED')))
+
+    def record_decision_frontier(self, frontier) -> dict[str, Any]:
+        """Append proposal evidence atomically against the current case revision."""
+        from .decision_planning import MeetingDecisionFrontier
+        if not isinstance(frontier, MeetingDecisionFrontier):
+            raise TypeError('PLANNER_TYPED_FRONTIER_REQUIRED')
+        payload = frontier.to_dict()
+        with self._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',
+                                (frontier.negotiation_id,)).fetchone()
+            if case is None:
+                raise KeyError(frontier.negotiation_id)
+            if case['event_revision_id'] != frontier.event_revision_id:
+                raise ValueError('PLANNER_REVISION_MISMATCH')
+            return self._record_negotiation_event(conn,
+                negotiation_id=frontier.negotiation_id,
+                event_type='DECISION_FRONTIER_COMPUTED', actor_type='agent',
+                actor_id='scheduling_agent', payload=payload)
+
+    def latest_decision_frontier(self, negotiation_id: str) -> dict[str, Any] | None:
+        """Current revision read model; historical replay reads pinned events directly."""
+        with self._connect() as conn:
+            case = conn.execute('SELECT event_revision_id FROM meeting_time_negotiations WHERE negotiation_id=?',
+                                (negotiation_id,)).fetchone()
+            if case is None:
+                raise KeyError(negotiation_id)
+            rows = conn.execute("SELECT payload_json FROM meeting_time_negotiation_events WHERE negotiation_id=? AND event_type='DECISION_FRONTIER_COMPUTED' ORDER BY event_sequence DESC",
+                                (negotiation_id,)).fetchall()
+        for row in rows:
+            payload = json.loads(row['payload_json'])
+            if payload['event_revision_id'] == case['event_revision_id']:
+                return payload
+        return None
+
     def _negotiation_expiry(self, *, created_at: str, original_start_time: str) -> str:
         created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         try:
