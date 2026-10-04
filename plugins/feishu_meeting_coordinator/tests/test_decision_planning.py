@@ -57,6 +57,31 @@ def test_cancel_requires_explicit_necessity_evidence():
     assert [o['action'] for o in f['decision_frontier']] == ['CANCEL']
 
 
+def test_total_attendance_counts_explicit_requester_availability():
+    b = basis()
+    people = b.participants[:3] + ({'attendee_user_id': 'organizer', 'role': 'requester', 'required_for_consent': False},)
+    availability = tuple(row for row in b.availability if row['attendee_user_id'] != 'dan') + tuple(
+        {'attendee_user_id': 'organizer', 'slot_id': slot, 'status': 'AVAILABLE'}
+        for slot in ('original', 'move', 'blocked'))
+    frontier = form_decision_frontier(replace(b, participants=people, availability=availability)).to_dict()
+    keep = next(option for option in frontier['decision_frontier'] if option['action'] == 'KEEP')
+    move = next(option for option in frontier['decision_frontier'] if option['action'] == 'MOVE')
+    assert keep['objective_vector']['attendance_coverage'] == .75
+    assert move['objective_vector']['attendance_coverage'] == 1
+
+
+def test_required_unknown_is_immaterial_when_even_joint_reply_cannot_change_frontier():
+    b = basis()
+    # Full original attendance dominates every move regardless of the missing reply.
+    rows = tuple({**row, 'status': 'AVAILABLE'} if row['slot_id'] == 'original' else row
+                 for row in b.availability if (row['slot_id'], row['attendee_user_id']) != ('move', 'bob'))
+    f = form_decision_frontier(replace(b, availability=rows)).to_dict()
+    assert [o['action'] for o in f['decision_frontier']] == ['KEEP']
+    assert not any(a['action'] == 'ASK' for a in f['information_actions'])
+    cancelled = form_decision_frontier(replace(b, availability=rows, meeting_necessity='RESOLVED_ASYNCHRONOUSLY')).to_dict()
+    assert not any(a['action'] == 'ASK' for a in cancelled['information_actions'])
+
+
 def test_dominated_move_is_excluded_and_information_budget_is_bounded():
     b = basis()
     inferior = {'slot_id': 'inferior', 'start_time': '2026-10-06T15:00:00Z', 'end_time': '2026-10-06T15:30:00Z'}

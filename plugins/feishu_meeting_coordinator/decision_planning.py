@@ -164,8 +164,8 @@ def evaluate_hard_constraints(basis, action):
 
 
 def compute_objective_vector(basis, action):
-    participants = _participants(basis)
-    required = [p for p in participants if p.get('required_for_consent')]
+    participants = sorted(basis.participants, key=lambda person: person['attendee_user_id'])
+    required = [p for p in _participants(basis) if p.get('required_for_consent')]
     if action.action == 'CANCEL':
         return MeetingObjectiveVector('NOT_APPLICABLE', 'NOT_APPLICABLE', 0, 0, sum(c for _, c in basis.followup_counts))
     states = [_availability(basis, action, p) for p in participants]
@@ -240,8 +240,15 @@ def evaluate_information_actions(basis):
                 if tuple(o.option_id for o in changed) != current:
                     material = True
             # Required UNKNOWN can jointly block feasibility even if one reply alone cannot close it.
-            if p.get('required_for_consent') and not any(c.status != UNKNOWN for c in evaluate_hard_constraints(basis, action)):
-                material = True
+            if p.get('required_for_consent'):
+                unknown_required = {other['attendee_user_id'] for other in _participants(basis)
+                    if other.get('required_for_consent') and _availability(basis, action, other) == UNKNOWN}
+                joint = replace(basis, availability=tuple(r for r in basis.availability
+                    if not (r['slot_id'] == action.slot_id and r['attendee_user_id'] in unknown_required)) + tuple(
+                    {'slot_id': action.slot_id, 'attendee_user_id': target, 'status': 'AVAILABLE'}
+                    for target in sorted(unknown_required)))
+                _, _, _, _, changed = _frontiers(joint)
+                material = material or tuple(o.option_id for o in changed) != current
             impact = 'MATERIAL' if material else 'IMMATERIAL'
             remaining = counts.get(p['attendee_user_id'], 0) < basis.max_followups
             information.append(MeetingInformationAction('ASK' if material and remaining else 'WAIT',
@@ -272,3 +279,27 @@ def form_decision_frontier(basis):
         tuple(o.option_id for o in feasible), tuple(o.option_id for o in pareto), decision, findings,
         tuple(excluded), info, 'CONTINUE_INFORMATION' if any(a.action == 'ASK' for a in info)
         else 'PRESENT_FRONTIER' if decision else 'WAIT_AUTHORITY', tuple(sorted(set(basis.basis_refs))))
+
+
+def project_decision_frontier(frontier):
+    value = frontier.to_dict()
+    return {
+        'plannerVersion': frontier.planner_version,
+        'inputHash': 'sha256:' + frontier.input_hash,
+        'outputHash': 'sha256:' + value['output_hash'],
+        'capabilityFrontier': value['capability_frontier'],
+        'paretoFrontier': value['pareto_frontier'],
+        'decisionFrontier': [o['option_id'] for o in value['decision_frontier']],
+        'options': [{'optionRef': o['option_id'], 'action': o['action'], 'targetRef': o['slot_id'],
+                     'objectives': o['objective_vector'], 'summary': o['tradeoff_summary']}
+                    for o in value['decision_frontier']],
+        'bindingConstraints': value['binding_constraints'],
+        'excludedAlternatives': [{'alternativeRef': a['action_ref'], 'reason': a['reason'],
+                                 'dominatedBy': a['dominated_by'], 'constraints': a['binding_constraints']}
+                                for a in value['excluded_alternatives']],
+        'informationActions': [{'action': a['action'], 'targetRef': a['target_ref'],
+                                'subjectRef': a['slot_id'], 'impact': a['expected_frontier_impact'],
+                                'cost': a['estimated_coordination_cost'], 'basis': a['basis']}
+                               for a in value['information_actions']],
+        'disposition': value['sufficient_progress_disposition'], 'basisRefs': value['basis_refs'],
+    }

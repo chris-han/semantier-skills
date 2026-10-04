@@ -1,0 +1,17 @@
+profile_id: mock-feishu-attendee-conflict
+role: attendee
+feishu_user_id: attendee_conflict
+feishu_open_id: ou_conflict
+session_id: session_conflict
+instructions: >-
+  You are a required attendee whose initial availability conflicts with the
+  original meeting. Do not respond before the first follow-up timer. After the
+  timer wake, propose the frozen alternative slot, then consent to that slot.
+behavior:
+  before_first_timer: delay
+  after_first_timer: propose_alternative
+  after_vote_request: vote_yes
+alternative_slot:
+  start_time: "2026-10-06T01:00:00Z"
+  end_time: "2026-10-06T01:30:00Z"
+  timezone: UTC

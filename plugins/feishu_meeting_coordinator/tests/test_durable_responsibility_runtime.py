@@ -74,6 +74,17 @@ def _setup(tmp_path):
     return store, negotiation
 
 
+def test_requester_authority_change_blocks_decision_before_effect(tmp_path):
+    from feishu_meeting_coordinator.gateway import apply_requester_decision
+    store, negotiation = _setup(tmp_path)
+    store.transition_negotiation_state(negotiation['negotiation_id'], expected_state=negotiation['status'],
+                                       next_state='awaiting_requester_decision', patch={})
+    with pytest.raises(ValueError, match='REQUESTER_AUTHORITY_REQUIRED'):
+        apply_requester_decision({'negotiation_id': negotiation['negotiation_id'],
+                                  'action': 'requester_cancel', 'requested_by_user_id': 'attendee_a'}, store=store)
+    assert store.get_negotiation(negotiation['negotiation_id'])['status'] == 'awaiting_requester_decision'
+
+
 class FakeCron:
     def __init__(self):
         self.jobs = {}

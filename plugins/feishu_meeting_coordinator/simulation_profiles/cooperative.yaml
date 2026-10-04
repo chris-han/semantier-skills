@@ -1,0 +1,10 @@
+profile_id: mock-feishu-attendee-cooperative
+role: attendee
+feishu_user_id: attendee_cooperative
+feishu_open_id: ou_cooperative
+session_id: session_cooperative
+instructions: >-
+  You are a cooperative required attendee. When asked to vote on a compatible
+  proposed slot, accept it promptly. You never exercise requester authority.
+behavior:
+  on_vote_request: vote_yes

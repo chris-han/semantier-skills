@@ -355,6 +355,33 @@ def test_planning_events_preserve_history_and_reject_cross_revision(store):
     assert len([e for e in store.list_negotiation_events(case['negotiation_id']) if e['event_type'] == 'DECISION_FRONTIER_COMPUTED']) == 2
 
 
+def test_restart_after_compute_recovers_frontier_and_revision_change_hides_it(store):
+    import os
+    import subprocess
+    import sys
+    from feishu_meeting_coordinator.decision_planning import form_decision_frontier
+    monitor = store.start_monitor(_monitor_payload())
+    case = store.create_or_get_negotiation_case(monitor_id=monitor['monitor_id'],
+        event_revision_id='rev_1', trigger_attendee_user_id='ou_a')
+    frontier = form_decision_frontier(store.decision_planning_basis(case['negotiation_id']))
+    persisted = store.record_decision_frontier(frontier)
+    program = 'import json,sys; from feishu_meeting_coordinator.store import MeetingCoordinatorStore; print(json.dumps(MeetingCoordinatorStore(sys.argv[1]).latest_decision_frontier(sys.argv[2])))'
+    restarted = subprocess.run([sys.executable, '-c', program, str(store.path), case['negotiation_id']],
+                               capture_output=True, text=True, env=os.environ, timeout=20, check=True)
+    assert json.loads(restarted.stdout)['input_hash'] == frontier.input_hash
+    assert not any(event['event_type'] == 'DECISION_FRONTIER_PRESENTED'
+                   for event in store.list_negotiation_events(case['negotiation_id']))
+    # Inject an upstream event revision change after the persisted proposal.
+    with store._connect() as conn:
+        conn.execute('UPDATE meeting_time_negotiations SET event_revision_id=? WHERE negotiation_id=?',
+                     ('rev_2', case['negotiation_id']))
+    assert store.latest_decision_frontier(case['negotiation_id']) is None
+    with pytest.raises(ValueError, match='PLANNER_REVISION_MISMATCH'):
+        store.record_decision_frontier(frontier)
+    assert any(event['event_id'] == persisted['event_id']
+               for event in store.list_negotiation_events(case['negotiation_id']))
+
+
 def test_planning_basis_uses_slot_specific_votes_and_original_rsvp(store):
     monitor = store.start_monitor(_monitor_payload())
     case = store.create_or_get_negotiation_case(monitor_id=monitor['monitor_id'],
@@ -367,7 +394,8 @@ def test_planning_basis_uses_slot_specific_votes_and_original_rsvp(store):
     assert states[slot['slot_id'], 'ou_a'] == 'AVAILABLE'
     assert states[slot['slot_id'], 'ou_b'] == 'UNAVAILABLE'
     assert states['original', 'ou_b'] == 'UNKNOWN'
-    assert not any(p['role'] == 'requester' for p in basis.participants)
+    assert any(p['role'] == 'requester' for p in basis.participants)
+    assert states['original', 'user_1'] == 'UNKNOWN'
 
 
 def test_case_tick_queries_material_candidate_instead_of_latest_blocked_slot(store):

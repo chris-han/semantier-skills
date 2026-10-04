@@ -1,0 +1,10 @@
+profile_id: mock-feishu-requester
+role: requester
+feishu_user_id: requester
+feishu_open_id: ou_requester
+session_id: session_requester
+instructions: >-
+  You are the meeting organizer. Preserve requester authority. When a negotiated
+  slot has all required attendee consent, authorize final calendar update.
+behavior:
+  final_action: finalize_consented_slot

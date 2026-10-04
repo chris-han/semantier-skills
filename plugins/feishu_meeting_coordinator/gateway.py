@@ -3478,6 +3478,8 @@ def apply_requester_decision(
     if not requested_by_user_id:
         raise ValueError("requested_by_user_id is required")
     negotiation = store.get_negotiation(negotiation_id)
+    if requested_by_user_id != negotiation['creator_user_id']:
+        raise ValueError('REQUESTER_AUTHORITY_REQUIRED')
     slot_id = str(payload.get("slot_id") or payload.get("selected_slot_id") or "").strip()
     if action == "requester_cancel":
         return _apply_requester_decision(

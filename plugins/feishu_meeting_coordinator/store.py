@@ -1695,7 +1695,6 @@ class MeetingCoordinatorStore:
                 raise KeyError(negotiation_id)
             case = dict(row)
             participants = [dict(r) for r in conn.execute('SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? ORDER BY attendee_user_id', (negotiation_id,))]
-            participants = [p for p in participants if p['role'] != 'requester']
             slots = [dict(r) for r in conn.execute("SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=? AND status!='superseded' ORDER BY slot_id", (negotiation_id,))]
             votes = [dict(r) for r in conn.execute('SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=? ORDER BY created_at, vote_id', (negotiation_id,))]
             rsvps = {r['attendee_user_id']: r['response_status'] for r in conn.execute('SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=?', (case['monitor_id'],))}
@@ -1714,17 +1713,18 @@ class MeetingCoordinatorStore:
             original_slot={'slot_id': 'original', 'start_time': case['original_start_time'], 'end_time': case['original_end_time']},
             participants=tuple(participants), candidate_slots=tuple(slots),
             availability=tuple({'slot_id': s, 'attendee_user_id': p, 'status': v} for (s, p), v in sorted(states.items())),
-            followup_counts=tuple((p['attendee_user_id'], int(p.get('followup_count') or 0)) for p in participants),
+            followup_counts=tuple((p['attendee_user_id'], int(p.get('followup_count') or 0)) for p in participants if p['role'] != 'requester'),
             max_followups=int(settings['max_followups']) if settings else DEFAULT_MAX_FOLLOWUPS,
             meeting_necessity=str(payload.get('meeting_necessity') or 'UNKNOWN'),
             basis_refs=tuple(e['event_id'] for e in events if e['event_type'] not in ('DECISION_FRONTIER_COMPUTED', 'INFORMATION_ACTION_SELECTED', 'DECISION_FRONTIER_PRESENTED')))
 
     def record_decision_frontier(self, frontier) -> dict[str, Any]:
         """Append proposal evidence atomically against the current case revision."""
-        from .decision_planning import MeetingDecisionFrontier
+        from .decision_planning import MeetingDecisionFrontier, project_decision_frontier
         if not isinstance(frontier, MeetingDecisionFrontier):
             raise TypeError('PLANNER_TYPED_FRONTIER_REQUIRED')
         payload = frontier.to_dict()
+        payload['decisionProjection'] = project_decision_frontier(frontier)
         with self._connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
             case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',

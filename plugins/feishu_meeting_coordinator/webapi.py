@@ -22,6 +22,7 @@ from .webapi_service import (
 router = APIRouter(tags=["webapi-gateway"])
 
 ROUTE_POLICY_MAP = {
+    ("GET", "/system/meeting-coordinator/simulation"): "authenticated",
     ("POST", "/callbacks/feishu/meeting-coordinator/reply"): "public",
     ("GET", "/system/meeting-coordinator/workflow-binding"): "authenticated",
     ("POST", "/system/meeting-coordinator/negotiations/start"): "authenticated",
@@ -46,6 +47,22 @@ ROUTE_POLICY_MAP = {
 }
 
 ROUTE_AUTHZ_CLASS_MAP = {}
+
+
+@router.get('/system/meeting-coordinator/simulation')
+async def system_meeting_coordinator_simulation(request: Request, workspace_user_count: int = 4,
+                                                stable_seed: str = 'workshop-v1',
+                                                workflow_version: str = '2', scenario: str = 'A'):
+    from .simulation import simulate_meeting
+    from starlette.concurrency import run_in_threadpool
+    ctx = request_context_from_request(request)
+    if not ctx.authenticated:
+        raise HTTPException(status_code=401, detail='authentication required')
+    try:
+        return await run_in_threadpool(simulate_meeting, workspace_user_count=workspace_user_count, stable_seed=stable_seed, context=ctx,
+                                workflow_version=workflow_version, scenario=scenario)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _utc_now_iso() -> str:
