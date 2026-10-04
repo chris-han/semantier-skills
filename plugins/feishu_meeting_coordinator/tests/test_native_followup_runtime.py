@@ -254,7 +254,8 @@ def test_production_followup_uses_one_shot_native_primitives_and_stops_at_max(tm
         if item["attendee_user_id"] == "ou_a"
     )
     assert participant["followup_count"] == 1
-    assert first_tick["followups_sent"] == 1
+    assert first_tick["wake_accepted"] is True
+    assert "followups_sent" not in first_tick
 
     first_timer = TimerOccurrenceStore(store.path).get(first_timer_id)
     assert first_timer is not None
@@ -299,7 +300,8 @@ def test_production_followup_uses_one_shot_native_primitives_and_stops_at_max(tm
         cron=cron,
         feishu_client=feishu,
     )
-    assert duplicate["duplicate_timer_delivery"] is True
+    assert duplicate["wake_accepted"] is False
+    assert duplicate["wake_reason"] in {"duplicate", "no_matching_wait"}
     assert len(feishu.calls) == calls_before_duplicate
     assert len(cron.created) == jobs_before_duplicate
 
@@ -320,9 +322,11 @@ def test_production_followup_uses_one_shot_native_primitives_and_stops_at_max(tm
         if item["attendee_user_id"] == "ou_a"
     )
     assert participant["followup_count"] == 2
-    assert second_tick["followups_sent"] == 1
-    assert second_tick["followup_cron_metadata"]["followup_cron_status"] == "paused"
-    assert second_tick["followup_cron_metadata"]["next_followup_at"] is None
+    assert second_tick["wake_accepted"] is True
+    assert "followups_sent" not in second_tick
+    post_second = store.get_negotiation(negotiation["negotiation_id"])
+    assert post_second["followup_cron_status"] == "paused"
+    assert post_second["next_followup_at"] is None
     assert len(cron.created) == 2
 
 
@@ -394,7 +398,8 @@ def test_uncertain_provider_send_reconciles_without_duplicate_domain_apply(tmp_p
         if item["attendee_user_id"] == "ou_a"
     )
     assert participant["followup_count"] == 1
-    assert result["followups_sent"] == 1
+    assert result["wake_accepted"] is True
+    assert "followups_sent" not in result
 
     native_calls = [call for call in feishu.calls if call["idempotency_key"]]
     assert len(native_calls) == 2

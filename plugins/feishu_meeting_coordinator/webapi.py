@@ -241,7 +241,12 @@ async def system_meeting_coordinator_negotiation_start(request: Request):
     body = await request.json()
     try:
         store = meeting_coordinator_store.store_for_context(ctx)
-        result = meeting_coordinator_gateway.negotiation_case_start(body, store=store, runtime_context=ctx)
+        result = meeting_coordinator_gateway.negotiation_case_start(
+            body,
+            store=store,
+            cron=MeetingCoordinatorWebApiCronClient(ctx),
+            runtime_context=ctx,
+        )
         return {'ok': True, 'negotiation':result}
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -425,6 +430,7 @@ async def system_meeting_coordinator_negotiation_reply(
                 "message_id": message_id,
             },
             store=store,
+            cron=MeetingCoordinatorWebApiCronClient(ctx),
         )
         return {
             "ok": True,
@@ -439,6 +445,7 @@ async def system_meeting_coordinator_negotiation_reply(
                 "message_id": message_id,
             },
             store=store,
+            cron=MeetingCoordinatorWebApiCronClient(ctx),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

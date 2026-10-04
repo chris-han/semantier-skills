@@ -112,11 +112,11 @@ edges:
     target: cancel_meeting
     transition_class: conditional
     condition_ref: requester_cancelled
-  - id: wait_to_terminal
+  - id: wait_to_poll
     source: wait_followup
-    target: terminal
-    transition_class: conditional
-    condition_ref: occurrence_suspended_until_next_runtime_tick
+    target: poll_rsvp
+    transition_class: retry
+    condition_ref: wake_signal_accepted
   - id: finalize_to_terminal
     source: finalize_meeting
     target: terminal

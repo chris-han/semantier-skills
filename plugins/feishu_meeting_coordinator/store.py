@@ -1527,24 +1527,63 @@ class MeetingCoordinatorStore:
             if hash_value(binding) != case['workflow_binding_hash']:
                 raise ValueError('WORKFLOW_INSTANCE_BINDING_HASH_MISMATCH')
             payload = {**payload, 'workflowBindingHash':case['workflow_binding_hash'], 'organizationId':case['organization_id'], 'workspaceId':case['workspace_id']}
-            node = {'CASE_CREATED':'ensure_negotiation_case', 'SLOT_PROPOSED':'collect_candidate_slots', 'VOTE_RECORDED':'collect_votes', 'CALENDAR_UPDATE_STARTED':'finalize_meeting', 'CALENDAR_UPDATE_FAILED':'finalize_meeting', 'CALENDAR_UPDATE_SUCCEEDED':'finalize_meeting'}.get(event_type)
+            node = {
+                'CASE_CREATED':'ensure_negotiation_case',
+                'SLOT_PROPOSED':'collect_candidate_slots',
+                'VOTE_RECORDED':'collect_votes',
+                'RESPONSIBILITY_WAITING':'wait_followup',
+                'RESPONSIBILITY_WAKE_ACCEPTED':'wait_followup',
+                'FOLLOWUP_RSVP_POLLED':'poll_rsvp',
+                'CALENDAR_UPDATE_STARTED':'finalize_meeting',
+                'CALENDAR_UPDATE_FAILED':'finalize_meeting',
+                'CALENDAR_UPDATE_SUCCEEDED':'finalize_meeting',
+            }.get(event_type)
             if node:
                 if node not in {op['nodeRef'] for op in binding['execution']['operators']}:
                     raise ValueError('WORKFLOW_EXECUTION_BINDING_UNAVAILABLE')
-                payload = {**payload, 'nodeRef':node, 'nodeStatus':{'CALENDAR_UPDATE_STARTED':'running','CALENDAR_UPDATE_FAILED':'failed'}.get(event_type,'completed')}
+                payload = {
+                    **payload,
+                    'nodeRef':node,
+                    'nodeStatus':{
+                        'RESPONSIBILITY_WAITING':'waiting',
+                        'RESPONSIBILITY_WAKE_ACCEPTED':'completed',
+                        'CALENDAR_UPDATE_STARTED':'running',
+                        'CALENDAR_UPDATE_FAILED':'failed',
+                    }.get(event_type,'completed'),
+                }
             transition = {
                 'CASE_CREATED': ('event_to_case','observe_meeting_event','ensure_negotiation_case',None,'completed'),
                 'SLOT_PROPOSED': ('slots_to_votes','collect_candidate_slots','collect_votes',None,'waiting'),
                 'VOTE_RECORDED': ('votes_to_authority','collect_votes','evaluate_terminal_authority','vote_or_rsvp_state_changed','ready'),
+                'RESPONSIBILITY_WAKE_ACCEPTED': ('wait_to_poll','wait_followup','poll_rsvp','wake_signal_accepted','ready'),
+                'FOLLOWUP_RSVP_POLLED': ('poll_to_slots','poll_rsvp','collect_candidate_slots',None,'ready'),
             }.get(event_type)
             if transition:
                 edge_ref, source, target, condition, target_status = transition
                 controller = next((c for c in binding['execution']['controllers'] if c['edgeRef'] == edge_ref),None)
-                if not controller or controller['sourceRef'] != source or controller['targetRef'] != target or controller.get('conditionRef') != condition:
+                if not controller:
+                    if event_type in {'RESPONSIBILITY_WAKE_ACCEPTED','FOLLOWUP_RSVP_POLLED'}:
+                        transition = None
+                    else:
+                        raise ValueError('WORKFLOW_EXECUTION_CONTROLLER_UNAVAILABLE')
+                elif (
+                    controller['sourceRef'] != source
+                    or controller['targetRef'] != target
+                    or controller.get('conditionRef') != condition
+                ):
                     raise ValueError('WORKFLOW_EXECUTION_CONTROLLER_UNAVAILABLE')
-                payload = {**payload, 'nodeRef':source, 'nodeStatus':'completed', 'controllerRef':edge_ref,
-                           'targetRef':target, 'targetStatus':target_status, 'conditionRef':condition,
-                           'conditionSatisfied':True, 'transitionOutcome':'selected'}
+                if transition is not None:
+                    payload = {
+                        **payload,
+                        'nodeRef':source,
+                        'nodeStatus':'completed',
+                        'controllerRef':edge_ref,
+                        'targetRef':target,
+                        'targetStatus':target_status,
+                        'conditionRef':condition,
+                        'conditionSatisfied':True,
+                        'transitionOutcome':'selected',
+                    }
         payload_json = _json(payload)
         payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         event_id = _hash_id(
@@ -3416,6 +3455,8 @@ class MeetingCoordinatorStore:
                     payload={
                         "message_event_id": message_event_id,
                         "message_id": message_id,
+                        "agent_profile_id": payload.get("agent_profile_id"),
+                        "agent_session_id": payload.get("agent_session_id"),
                     },
                 )
             row = conn.execute(

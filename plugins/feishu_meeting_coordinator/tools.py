@@ -392,7 +392,10 @@ class _DefaultGateway:
     def negotiation_case_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
         return meeting_coordinator_gateway.negotiation_case_start(
-            payload, store=meeting_coordinator_store.MeetingCoordinatorStore(), kanban=None,
+            payload,
+            store=meeting_coordinator_store.MeetingCoordinatorStore(),
+            kanban=None,
+            cron=self._cron(),
         )
 
     def negotiation_case_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -476,9 +479,11 @@ class _DefaultGateway:
         reply_payload = dict(payload)
         if reply_payload.get("start_time") and reply_payload.get("end_time"):
             _normalize_temporal_window_payload(reply_payload)
-        return meeting_coordinator_gateway.submit_negotiation_reply(
+        return meeting_coordinator_gateway.negotiation_case_submit_reply(
             reply_payload,
             store=store,
+            kanban=meeting_coordinator_gateway._resolve_kanban_client(None),
+            cron=self._cron(),
         )
 
     def negotiation_case_finalize(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -538,7 +543,7 @@ class _DefaultGateway:
         }
 
     def negotiation_rsvp_poll(self, payload: dict[str, Any]) -> dict[str, Any]:
-        _, meeting_coordinator_store = _meeting_modules()
+        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
 
         negotiation_id = _text(payload.get("negotiation_id"))
         if not negotiation_id:
@@ -563,7 +568,7 @@ class _DefaultGateway:
                     attendee_user_id = _text(attendee.get("user_id"))
                     if not attendee_user_id:
                         continue
-                    normalized = _normalize_feishu_rsvp_status(
+                    normalized = meeting_coordinator_gateway._normalize_feishu_rsvp_status(
                         attendee.get("response_status")
                     )
                     persisted = normalized
@@ -590,7 +595,7 @@ class _DefaultGateway:
                         }
                     )
 
-        _record_negotiation_event_safely(
+        meeting_coordinator_gateway._record_negotiation_event_safely(
             store=store,
             negotiation_id=negotiation_id,
             event_type="FOLLOWUP_RSVP_POLLED",
@@ -610,7 +615,7 @@ class _DefaultGateway:
         }
 
     def negotiation_due_followups_list(self, payload: dict[str, Any]) -> dict[str, Any]:
-        _, meeting_coordinator_store = _meeting_modules()
+        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
 
         negotiation_id = _text(payload.get("negotiation_id"))
         if not negotiation_id:
@@ -634,11 +639,13 @@ class _DefaultGateway:
 
         due_followups: list[dict[str, Any]] = []
         for participant in store.list_negotiation_participants(negotiation_id):
-            if not _followup_reminder_needed(participant):
+            if not meeting_coordinator_gateway._followup_reminder_needed(participant):
                 continue
             if int(participant.get("followup_count") or 0) >= max_followups:
                 continue
-            if not _followup_due(participant, interval_minutes=interval_minutes):
+            if not meeting_coordinator_gateway._followup_due(
+                participant, interval_minutes=interval_minutes
+            ):
                 continue
             due_followups.append(
                 {

@@ -95,12 +95,17 @@ class MeetingCoordinatorWebApiCronClient:
                 )
             """
         elif name.startswith(followup_prefix):
-            negotiation_id = name[len(followup_prefix):].strip()
-            if not negotiation_id:
-                raise RuntimeError("missing negotiation id for no-agent meeting coordinator follow-up job")
+            followup_identity = name[len(followup_prefix):].strip()
+            parts = followup_identity.split("::", 1)
+            negotiation_id = parts[0].strip()
+            timer_id = parts[1].strip() if len(parts) > 1 else ""
+            if not negotiation_id or not timer_id:
+                raise RuntimeError(
+                    "meeting coordinator timer job requires negotiation and timer identity"
+                )
             invocation = f"""
                 result_text = plugin_tools.feishu_meeting_followup_cron_tick(
-                    {{"negotiation_id": {negotiation_id!r}}}
+                    {{"negotiation_id": {negotiation_id!r}, "timer_id": {timer_id!r}}}
                 )
             """
         else:

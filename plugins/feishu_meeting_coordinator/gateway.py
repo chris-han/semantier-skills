@@ -677,6 +677,7 @@ def _admit_native_followup_effects(
     timer_id: str,
     store: MeetingCoordinatorStore,
     specs: list[dict[str, Any]],
+    transaction_guard: Callable[[Any], None] | None = None,
 ) -> list[dict[str, Any]]:
     from agents.durable_event_arbitration import DurableEventInbox, WorkflowVersion
     from agents.effect_outbox import AtomicEffectOutbox, derive_effect_identity
@@ -692,6 +693,8 @@ def _admit_native_followup_effects(
         )
 
     def transition(conn, current):
+        if transaction_guard is not None:
+            transaction_guard(conn)
         if current.terminal:
             return current, []
         admitted: list[dict[str, Any]] = []
@@ -1728,7 +1731,7 @@ def _apply_requester_decision(
     raise ValueError("invalid_requester_action")
 
 
-def ensure_negotiation_followup_cron(
+def _legacy_ensure_negotiation_followup_cron(
     *,
     negotiation_id: str,
     store: MeetingCoordinatorStore,
@@ -1887,6 +1890,47 @@ def ensure_negotiation_followup_cron(
     return negotiation
 
 
+def ensure_negotiation_followup_cron(
+    *,
+    negotiation_id: str,
+    store: MeetingCoordinatorStore,
+    cron: CronClient | None,
+    schedule: str = "every 2m",
+    kanban: KanbanClient | None = None,
+    owner_profile: str | None = None,
+    owner_idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Ensure durable responsibility execution; cron remains timer transport only."""
+    del owner_profile, owner_idempotency_key
+    from .durable_runtime import MeetingResponsibilityRuntime
+
+    interval_minutes = _schedule_interval_minutes(schedule) or 2
+    runtime = MeetingResponsibilityRuntime(
+        store=store,
+        cron=cron,
+        kanban=kanban,
+        followup_interval_minutes=interval_minutes,
+    )
+    negotiation = store.get_negotiation(negotiation_id)
+    if _negotiation_is_terminal(negotiation):
+        item = runtime.ensure(negotiation_id)
+        current = runtime.responsibilities.get(item.responsibility_id)
+        if current is not None and current.lifecycle_state != "TERMINAL":
+            try:
+                runtime.run(negotiation_id)
+            except Exception:
+                pass
+        return store.get_negotiation(negotiation_id)
+
+    item = runtime.ensure(negotiation_id)
+    current = runtime.responsibilities.get(item.responsibility_id)
+    if current is not None and current.lifecycle_state == "READY":
+        runtime.run(negotiation_id)
+    else:
+        runtime._arm_pending_timers(item.responsibility_id)
+    return store.get_negotiation(negotiation_id)
+
+
 def stop_negotiation_followup_cron(
     *,
     negotiation_id: str,
@@ -1983,6 +2027,8 @@ def negotiation_case_start(
     *,
     store: MeetingCoordinatorStore,
     kanban: KanbanClient | None = None,
+    cron: CronClient | None = None,
+    feishu_client: Any | None = None,
     runtime_context=None,
 ) -> dict[str, Any]:
     from contracts.workflow_execution import read_active_meeting_binding, meeting_context_from_execution_boundary
@@ -2015,11 +2061,21 @@ def negotiation_case_start(
         workflow_binding=binding,
         runtime_context=ctx,
     )
+    result = negotiation
     if payload.get('ensure_kanban') is not False:
-        return ensure_negotiation_kanban_task(
+        result = ensure_negotiation_kanban_task(
             negotiation_id=str(negotiation['negotiation_id']), store=store, kanban=kanban,
         )
-    return negotiation
+
+    from .durable_runtime import MeetingResponsibilityRuntime
+
+    MeetingResponsibilityRuntime(
+        store=store,
+        cron=cron,
+        feishu_client=feishu_client,
+        kanban=kanban,
+    ).run(str(negotiation['negotiation_id']))
+    return result
 
 
 def negotiation_case_stop(
@@ -2047,6 +2103,8 @@ def negotiation_case_submit_reply(
     *,
     store: MeetingCoordinatorStore,
     kanban: KanbanClient | None = None,
+    cron: CronClient | None = None,
+    feishu_client: Any | None = None,
 ) -> dict[str, Any]:
     reply_payload = dict(payload)
     if reply_payload.get("start_time") and reply_payload.get("end_time"):
@@ -2054,6 +2112,9 @@ def negotiation_case_submit_reply(
     return submit_negotiation_reply(
         reply_payload,
         store=store,
+        kanban=kanban,
+        cron=cron,
+        feishu_client=feishu_client,
     )
 
 
@@ -2091,7 +2152,7 @@ def negotiation_requester_decision(
     )
 
 
-def negotiation_followup_cron_tick(
+def _run_negotiation_followup_business(
     payload: dict[str, Any],
     *,
     store: MeetingCoordinatorStore,
@@ -2099,6 +2160,8 @@ def negotiation_followup_cron_tick(
     cron: CronClient | None = None,
     feishu_client: Any | None = None,
     lock_ttl_seconds: int = NEGOTIATION_CASE_LOCK_TTL_SECONDS,
+    claim_guard: Callable[[], None] | None = None,
+    transaction_claim_guard: Callable[[Any], None] | None = None,
 ) -> dict[str, Any]:
     negotiation_id = str(payload.get("negotiation_id") or "").strip()
     if not negotiation_id:
@@ -2303,11 +2366,13 @@ def negotiation_followup_cron_tick(
                 "stop_result": stop,
             }
 
+        if claim_guard is not None:
+            claim_guard()
         client = feishu_client or _default_feishu_client()
 
         cron_stale = False
         cron_job_id = str(negotiation.get("followup_cron_job_id") or "").strip()
-        if cron is not None:
+        if cron is not None and payload.get("responsibility_managed") is not True:
             if not cron_job_id:
                 cron_stale = True
             else:
@@ -2491,11 +2556,14 @@ def negotiation_followup_cron_tick(
                 }
             )
 
+        if claim_guard is not None:
+            claim_guard()
         admitted_effects = _admit_native_followup_effects(
             negotiation_id=negotiation_id,
             timer_id=timer_id,
             store=store,
             specs=reminder_specs,
+            transaction_guard=transaction_claim_guard,
         )
         timer_store.mark_accepted(timer_id=timer_id)
 
@@ -2503,6 +2571,8 @@ def negotiation_followup_cron_tick(
         reminders_failed = 0
         reminder_effect_results: list[dict[str, Any]] = []
         for item in admitted_effects:
+            if claim_guard is not None:
+                claim_guard()
             effect_result = _dispatch_native_followup_effect(
                 negotiation_id=negotiation_id,
                 store=store,
@@ -2558,7 +2628,11 @@ def negotiation_followup_cron_tick(
             post_failure_count = (
                 int(negotiation.get("followup_cron_failure_count") or 0) + 1
             )
-        elif remaining_followup and cron is not None:
+        elif (
+            remaining_followup
+            and cron is not None
+            and payload.get("responsibility_managed") is not True
+        ):
             rearmed = ensure_negotiation_followup_cron(
                 negotiation_id=negotiation_id,
                 store=store,
@@ -2660,6 +2734,28 @@ def negotiation_followup_cron_tick(
         raise RuntimeError(str(exc)) from exc
     finally:
         store.release_negotiation_case_lock(negotiation_id, owner=owner)
+
+
+def negotiation_followup_cron_tick(
+    payload: dict[str, Any],
+    *,
+    store: MeetingCoordinatorStore,
+    kanban: KanbanClient | None = None,
+    cron: CronClient | None = None,
+    feishu_client: Any | None = None,
+    lock_ttl_seconds: int = NEGOTIATION_CASE_LOCK_TTL_SECONDS,
+) -> dict[str, Any]:
+    """Compatibility entrypoint: cron transports only an exact timer signal."""
+    del lock_ttl_seconds
+    from .durable_runtime import deliver_followup_timer_signal
+
+    return deliver_followup_timer_signal(
+        payload,
+        store=store,
+        cron=cron,
+        feishu_client=feishu_client,
+        kanban=kanban,
+    )
 
 
 def negotiation_case_tick(
@@ -2979,12 +3075,20 @@ def submit_negotiation_reply(
     *,
     store: MeetingCoordinatorStore,
     kanban: KanbanClient | None = None,
+    cron: CronClient | None = None,
+    feishu_client: Any | None = None,
 ) -> dict[str, Any]:
     if (
         payload.get("callback_origin") is True
         and not str(payload.get("negotiation_id") or "").strip()
     ):
-        return _submit_negotiation_callback_reply(payload, store=store, kanban=kanban)
+        return _submit_negotiation_callback_reply(
+            payload,
+            store=store,
+            kanban=kanban,
+            cron=cron,
+            feishu_client=feishu_client,
+        )
 
     negotiation_id = str(payload.get("negotiation_id") or "").strip()
     participant_user_id = str(payload.get("participant_user_id") or "").strip()
@@ -3034,6 +3138,12 @@ def submit_negotiation_reply(
         payload={
             "reply_text": str(payload.get("reply_text") or ""),
             "intent": str(payload.get("intent") or payload.get("vote") or ""),
+            "agent_profile_id": (
+                str(payload.get("agent_profile_id") or "").strip() or None
+            ),
+            "agent_session_id": (
+                str(payload.get("agent_session_id") or "").strip() or None
+            ),
         },
     )
     kanban_wakeup = _kanban_comment_and_unblock_for_reply(
@@ -3050,7 +3160,27 @@ def submit_negotiation_reply(
             store=store,
             kanban=kanban,
         )
-        return {"accepted": True, **values, **kanban_wakeup}
+        from .durable_runtime import MeetingResponsibilityRuntime
+
+        wake = MeetingResponsibilityRuntime(
+            store=store,
+            cron=cron,
+            feishu_client=feishu_client,
+            kanban=kanban,
+        ).wake_reply(
+            negotiation_id=negotiation_id,
+            message_id=message_id,
+        )
+        return {
+            "accepted": True,
+            "responsibility_wake": {
+                "accepted": wake.accepted,
+                "reason": wake.reason,
+                "wake_id": wake.wake_id,
+            },
+            **values,
+            **kanban_wakeup,
+        }
 
     intent = str(payload.get("intent") or "").strip().lower()
     vote_value = str(payload.get("vote") or "").strip().lower()
@@ -3316,6 +3446,8 @@ def _submit_negotiation_callback_reply(
     *,
     store: MeetingCoordinatorStore,
     kanban: KanbanClient | None = None,
+    cron: CronClient | None = None,
+    feishu_client: Any | None = None,
 ) -> dict[str, Any]:
     if payload.get("callback_signature_valid") is not True:
         return {"status": "rejected", "reason": "invalid_signature"}
@@ -3386,6 +3518,8 @@ def _submit_negotiation_callback_reply(
         },
         store=store,
         kanban=kanban,
+        cron=cron,
+        feishu_client=feishu_client,
     )
     return {"status": "accepted", **result}
 
