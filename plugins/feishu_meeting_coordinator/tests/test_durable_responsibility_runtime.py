@@ -378,3 +378,21 @@ def test_duplicate_timer_signal_is_noop_after_first_acceptance(tmp_path):
     assert second["wake_accepted"] is False
     assert len(feishu.sent) == sent_after_first
     assert TimerOccurrenceStore(store.path).get(timer_id).state == ACCEPTED
+
+
+def test_known_frontier_does_not_rearm_immaterial_followups(tmp_path):
+    store, case = _setup(tmp_path)
+    slot = store.add_candidate_slot(case['negotiation_id'], proposed_by_user_id='attendee_a', round_number=1,
+        start_time='2026-10-06T01:00:00Z', end_time='2026-10-06T01:30:00Z', timezone_name='UTC', source_text=None)
+    store.update_attendee_statuses(case['monitor_id'], [{'user_id': 'attendee_a', 'response_status': 'declined'}])
+    store.transition_negotiation_state(case['negotiation_id'], expected_state='pending_decliner_input',
+        next_state='collecting_votes', patch={'current_round': 1}, actor_id='test')
+    cron, feishu = FakeCron(), FakeFeishu()
+    runtime = MeetingResponsibilityRuntime(store=store, cron=cron, feishu_client=feishu)
+    runtime.run(case['negotiation_id'])
+    item = runtime.ensure(case['negotiation_id'])
+    assert {wait.kind for wait in runtime.responsibilities.pending_waits(item.responsibility_id)} == {EVENT}
+    assert cron.created == []
+    frontier = store.latest_decision_frontier(case['negotiation_id'])
+    assert frontier['decision_frontier'][0]['slot_id'] == slot['slot_id']
+    assert frontier['sufficient_progress_disposition'] == 'PRESENT_FRONTIER'

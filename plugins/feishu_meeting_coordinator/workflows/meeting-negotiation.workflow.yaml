@@ -1,6 +1,6 @@
 schema_version: workflow_definition.v1
 workflow_id: feishu-meeting-coordinator
-workflow_version: "1"
+workflow_version: "2"
 owner_ref: skill:feishu_meeting_coordinator
 topology: dag
 
@@ -30,6 +30,12 @@ nodes:
   - id: collect_votes
     kind: wait
     label: Collect votes
+  - id: form_decision_frontier
+    kind: compute
+    label: Form decision frontier
+  - id: evaluate_information_value
+    kind: decide
+    label: Evaluate information value
   - id: evaluate_terminal_authority
     kind: decide
     label: Evaluate terminal authority
@@ -82,11 +88,25 @@ edges:
     source: collect_candidate_slots
     target: collect_votes
     transition_class: normal
-  - id: votes_to_authority
+  - id: votes_to_frontier
     source: collect_votes
-    target: evaluate_terminal_authority
+    target: form_decision_frontier
     transition_class: conditional
     condition_ref: vote_or_rsvp_state_changed
+  - id: frontier_to_information
+    source: form_decision_frontier
+    target: evaluate_information_value
+    transition_class: normal
+  - id: information_to_authority
+    source: evaluate_information_value
+    target: evaluate_terminal_authority
+    transition_class: conditional
+    condition_ref: frontier_ready
+  - id: information_to_wait
+    source: evaluate_information_value
+    target: wait_followup
+    transition_class: retry
+    condition_ref: evidence_needed
   - id: authority_to_finalize
     source: evaluate_terminal_authority
     target: finalize_meeting

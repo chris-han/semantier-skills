@@ -41,8 +41,10 @@ export default function NegotiationCard({
   const terminalReason = text(metadata.terminal_reason);
   const declinedAttendee = text(metadata.declined_attendee_name, "Declined attendee");
   const missingAttendees = asStringArray(metadata.missing_required_attendee_names);
-  const bestSlot = text(metadata.best_slot, "No candidate slot");
-  const bestSlotId = text(metadata.best_slot_id);
+  const summary = text(metadata.decision_frontier_summary, "Decision frontier unavailable");
+  const options = (Array.isArray(metadata.decision_options) ? metadata.decision_options : []) as Array<{
+    option_id: string; action: string; slot_id: string | null; tradeoff_summary: string;
+  }>;
   const showRequesterActions = status === "awaiting_requester_decision";
 
   return (
@@ -63,7 +65,7 @@ export default function NegotiationCard({
       <div>Terminal authority: {terminalAuthority || "n/a"}</div>
       <div>Terminal at: {terminalAt || "n/a"}</div>
       <div>Terminal reason: {terminalReason || "n/a"}</div>
-      <div>Best slot: {bestSlot}</div>
+      <div>{summary}</div>
       <div>
         Missing required attendees:{" "}
         {missingAttendees.length > 0 ? missingAttendees.join(", ") : "none"}
@@ -88,19 +90,13 @@ export default function NegotiationCard({
             >
               Keep original
             </button>
-            {bestSlotId ? (
-              <button
-                type="button"
-                onClick={() =>
-                  onAction("requester_decision", {
-                    action: "requester_select_slot",
-                    slot_id: bestSlotId,
-                  })
-                }
-              >
-                Select best slot
+            {options.filter(option => option.action === "MOVE").map(option => (
+              <button key={option.option_id} type="button" onClick={() =>
+                onAction("requester_decision", { action: "requester_select_slot", slot_id: option.slot_id })
+              }>
+                Move — {option.tradeoff_summary}
               </button>
-            ) : null}
+            ))}
             <button
               type="button"
               onClick={() =>

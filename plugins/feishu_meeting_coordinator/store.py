@@ -1538,6 +1538,11 @@ class MeetingCoordinatorStore:
                 'CALENDAR_UPDATE_FAILED':'finalize_meeting',
                 'CALENDAR_UPDATE_SUCCEEDED':'finalize_meeting',
             }.get(event_type)
+            planning_v2 = 'form_decision_frontier' in {op['nodeRef'] for op in binding['execution']['operators']}
+            if planning_v2:
+                node = {'DECISION_FRONTIER_COMPUTED': 'form_decision_frontier',
+                        'INFORMATION_ACTION_SELECTED': 'evaluate_information_value',
+                        'DECISION_FRONTIER_PRESENTED': 'evaluate_information_value'}.get(event_type, node)
             if node:
                 if node not in {op['nodeRef'] for op in binding['execution']['operators']}:
                     raise ValueError('WORKFLOW_EXECUTION_BINDING_UNAVAILABLE')
@@ -1558,6 +1563,15 @@ class MeetingCoordinatorStore:
                 'RESPONSIBILITY_WAKE_ACCEPTED': ('wait_to_poll','wait_followup','poll_rsvp','wake_signal_accepted','ready'),
                 'FOLLOWUP_RSVP_POLLED': ('poll_to_slots','poll_rsvp','collect_candidate_slots',None,'ready'),
             }.get(event_type)
+            if planning_v2:
+                if event_type == 'VOTE_RECORDED':
+                    transition = ('votes_to_frontier', 'collect_votes', 'form_decision_frontier', 'vote_or_rsvp_state_changed', 'ready')
+                elif event_type == 'DECISION_FRONTIER_COMPUTED':
+                    transition = ('frontier_to_information', 'form_decision_frontier', 'evaluate_information_value', None, 'ready')
+                elif event_type == 'DECISION_FRONTIER_PRESENTED':
+                    transition = ('information_to_authority', 'evaluate_information_value', 'evaluate_terminal_authority', 'frontier_ready', 'ready')
+                elif event_type == 'INFORMATION_ACTION_SELECTED' and payload.get('sufficient_progress_disposition') == 'CONTINUE_INFORMATION':
+                    transition = ('information_to_wait', 'evaluate_information_value', 'wait_followup', 'evidence_needed', 'waiting')
             if transition:
                 edge_ref, source, target, condition, target_status = transition
                 controller = next((c for c in binding['execution']['controllers'] if c['edgeRef'] == edge_ref),None)

@@ -59,42 +59,21 @@ def negotiation_task_metadata(
                 )
                 break
         metadata["declined_attendee_name"] = declined_attendee_name
-    slots = active_store.list_candidate_slots(negotiation_id)
-    if slots:
-        visible_slots = [
-            slot for slot in slots if str(slot.get("status") or "") != "superseded"
-        ]
-        if not visible_slots:
-            visible_slots = slots
-        latest_slot = visible_slots[-1]
-        slot_id = _to_text(latest_slot.get("slot_id"))
-        metadata["best_slot_id"] = slot_id
-        metadata["best_slot"] = (
-            f"{_to_text(latest_slot.get('start_time'))} - {_to_text(latest_slot.get('end_time'))}"
-        )
-        metadata["best_slot_timezone"] = _to_text(latest_slot.get("timezone"), "UTC")
-        votes = (
-            active_store.list_votes_for_slot(
-                negotiation_id=negotiation_id,
-                slot_id=slot_id,
-            )
-            if slot_id
-            else []
-        )
-        vote_yes_ids = {
-            str(item.get("attendee_user_id"))
-            for item in votes
-            if str(item.get("vote") or "") == "yes"
-        }
-        vote_yes_ids.add(_to_text(latest_slot.get("proposed_by_user_id")))
-        still_missing = [
-            str(item.get("attendee_user_id"))
-            for item in required_participants
-            if str(item.get("attendee_user_id")) not in vote_yes_ids
-        ]
-        missing_attendee_names = _to_names(
-            [item for item in required_participants if item["attendee_user_id"] in still_missing]
-        )
+    frontier = active_store.latest_decision_frontier(negotiation_id)
+    options = frontier['decision_frontier'] if frontier else []
+    material = [a for a in (frontier['information_actions'] if frontier else [])
+                if a['action'] == 'ASK' and a['expected_frontier_impact'] == 'MATERIAL']
+    material_ids = {a['target_ref'] for a in material}
+    if frontier:
+        missing_attendee_names = _to_names([p for p in participants if p['attendee_user_id'] in material_ids])
+    metadata.update({
+        'decision_frontier_summary': f"{len(options)} decision options; waiting for {len(material_ids)} material replies" if frontier else 'Decision frontier unavailable',
+        'decision_options': options,
+        'binding_constraints': frontier['binding_constraints'] if frontier else [],
+        'information_status': frontier['sufficient_progress_disposition'] if frontier else 'UNAVAILABLE',
+        'planner_version': frontier['planner_version'] if frontier else None,
+        'frontier_observed_at': next((e['created_at'] for e in reversed(active_store.list_negotiation_events(negotiation_id)) if e['event_type'] == 'DECISION_FRONTIER_COMPUTED'), None),
+    })
     metadata["followup_cron_status"] = _to_text(
         record.get("followup_cron_status"),
         "not_created",

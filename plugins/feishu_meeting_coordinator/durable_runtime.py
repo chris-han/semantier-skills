@@ -153,8 +153,10 @@ class MeetingContinuationHandler:
             )
             or 3
         )
+        material_targets = gateway._material_followup_targets(negotiation_id, self.store)
         timer_needed = any(
-            gateway._followup_reminder_needed(participant)
+            (material_targets is None or str(participant['attendee_user_id']) in material_targets)
+            and gateway._followup_reminder_needed(participant)
             and int(participant.get("followup_count") or 0) < max_followups
             for participant in self.store.list_negotiation_participants(negotiation_id)
         )

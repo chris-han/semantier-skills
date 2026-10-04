@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -367,3 +368,39 @@ def test_planning_basis_uses_slot_specific_votes_and_original_rsvp(store):
     assert states[slot['slot_id'], 'ou_b'] == 'UNAVAILABLE'
     assert states['original', 'ou_b'] == 'UNKNOWN'
     assert not any(p['role'] == 'requester' for p in basis.participants)
+
+
+def test_case_tick_queries_material_candidate_instead_of_latest_blocked_slot(store):
+    from feishu_meeting_coordinator.gateway import _run_negotiation_case_tick
+    monitor = store.start_monitor(_monitor_payload())
+    store.update_attendee_statuses(monitor['monitor_id'], [{'user_id': 'ou_a', 'response_status': 'declined'}])
+    case = store.create_or_get_negotiation_case(monitor_id=monitor['monitor_id'],
+        event_revision_id='rev_1', trigger_attendee_user_id='ou_a')
+    viable = store.add_candidate_slot(case['negotiation_id'], proposed_by_user_id='ou_a', round_number=1,
+        start_time='2026-06-15T03:00:00Z', end_time='2026-06-15T03:30:00Z', timezone_name='UTC', source_text=None)
+    blocked = store.add_candidate_slot(case['negotiation_id'], proposed_by_user_id='ou_a', round_number=2,
+        start_time='2026-06-15T04:00:00Z', end_time='2026-06-15T04:30:00Z', timezone_name='UTC', source_text=None)
+    store.record_vote(negotiation_id=case['negotiation_id'], slot_id=blocked['slot_id'], attendee_user_id='ou_a', vote='no')
+    store.transition_negotiation_state(case['negotiation_id'], expected_state='pending_decliner_input',
+        next_state='collecting_votes', patch={'current_round': 2}, actor_id='test')
+    sent = []
+    result = _run_negotiation_case_tick(negotiation_id=case['negotiation_id'], store=store,
+        send_message=lambda ids, text: sent.append((ids, text)) or 'provider-message')
+    assert result['vote_prompts_sent'] == 1
+    messages = store.list_negotiation_messages(case['negotiation_id'])
+    assert '03:00' in json.loads(messages[-1]['payload_json'])['text']
+    assert store.latest_decision_frontier(case['negotiation_id']) is not None
+
+
+def test_dashboard_projects_recorded_frontier_without_latest_best_slot_claim(store):
+    from feishu_meeting_coordinator.dashboard.plugin_api import negotiation_task_metadata
+    from feishu_meeting_coordinator.decision_planning import form_decision_frontier
+    monitor = store.start_monitor(_monitor_payload())
+    case = store.create_or_get_negotiation_case(monitor_id=monitor['monitor_id'], event_revision_id='rev_1', trigger_attendee_user_id='ou_a')
+    store.record_decision_frontier(form_decision_frontier(store.decision_planning_basis(case['negotiation_id'])))
+    metadata = negotiation_task_metadata(case, store=store)
+    assert 'best_slot' not in metadata
+    assert 'best_slot_id' not in metadata
+    assert metadata['planner_version'] == 'meeting-decision-planner.v1'
+    assert metadata['decision_options'] == []
+    assert metadata['information_status'] == 'CONTINUE_INFORMATION'

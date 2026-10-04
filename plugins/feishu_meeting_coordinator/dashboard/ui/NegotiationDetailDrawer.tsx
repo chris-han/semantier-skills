@@ -40,8 +40,10 @@ export default function NegotiationDetailDrawer({
   const terminalReason = text(metadata.terminal_reason);
   const terminalEventRevisionId = text(metadata.terminal_event_revision_id);
   const declinedAttendee = text(metadata.declined_attendee_name, "Declined attendee");
-  const bestSlot = text(metadata.best_slot, "No candidate slot");
-  const bestSlotId = text(metadata.best_slot_id);
+  const summary = text(metadata.decision_frontier_summary, "Decision frontier unavailable");
+  const options = (Array.isArray(metadata.decision_options) ? metadata.decision_options : []) as Array<{
+    option_id: string; action: string; slot_id: string | null; tradeoff_summary: string;
+  }>;
   const missingAttendees = asStringArray(metadata.missing_required_attendee_names);
   const showRequesterActions = status === "awaiting_requester_decision";
 
@@ -81,13 +83,21 @@ export default function NegotiationDetailDrawer({
         <dd>{terminalReason || "n/a"}</dd>
         <dt>Terminal revision</dt>
         <dd>{terminalEventRevisionId || "n/a"}</dd>
-        <dt>Best slot</dt>
-        <dd>{bestSlot}</dd>
+        <dt>Decision frontier</dt>
+        <dd>{summary}</dd>
         <dt>Missing required attendees</dt>
         <dd>
           {missingAttendees.length > 0 ? missingAttendees.join(", ") : "none"}
         </dd>
       </dl>
+      <ul aria-label="Decision options">
+        {options.map(option => <li key={option.option_id}>{option.tradeoff_summary}</li>)}
+      </ul>
+      <details>
+        <summary>Planning evidence</summary>
+        <div>{text(metadata.planner_version, "Unavailable")}</div>
+        <pre>{JSON.stringify(metadata.binding_constraints ?? [], null, 2)}</pre>
+      </details>
       <footer>
         <button type="button" onClick={() => onAction("nudge_unblock")}>
           Nudge
@@ -105,19 +115,13 @@ export default function NegotiationDetailDrawer({
             >
               Keep original
             </button>
-            {bestSlotId ? (
-              <button
-                type="button"
-                onClick={() =>
-                  onAction("requester_decision", {
-                    action: "requester_select_slot",
-                    slot_id: bestSlotId,
-                  })
-                }
-              >
-                Select best slot
+            {options.filter(option => option.action === "MOVE").map(option => (
+              <button key={option.option_id} type="button" onClick={() =>
+                onAction("requester_decision", { action: "requester_select_slot", slot_id: option.slot_id })
+              }>
+                Move — {option.tradeoff_summary}
               </button>
-            ) : null}
+            ))}
             <button
               type="button"
               onClick={() =>

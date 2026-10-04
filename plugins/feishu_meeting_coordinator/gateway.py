@@ -1308,6 +1308,32 @@ def _send_attendee_message(
         return None
 
 
+def _material_followup_targets(negotiation_id: str, store: MeetingCoordinatorStore) -> set[str] | None:
+    case = store.get_negotiation(negotiation_id)
+    if case['status'] == 'pending_decliner_input':
+        # Candidate acquisition remains the existing bounded owner-native path.
+        return None
+    frontier = _refresh_decision_frontier(negotiation_id, store)
+    return {a.target_ref for a in frontier.information_actions
+            if a.expected_frontier_impact == 'MATERIAL' and a.action == 'ASK'}
+
+
+def _refresh_decision_frontier(negotiation_id: str, store: MeetingCoordinatorStore):
+    from .decision_planning import form_decision_frontier
+    frontier = form_decision_frontier(store.decision_planning_basis(negotiation_id))
+    snapshot = frontier.to_dict()
+    latest = store.latest_decision_frontier(negotiation_id)
+    if latest is None or latest['input_hash'] != frontier.input_hash:
+        store.record_decision_frontier(frontier)
+        store.record_negotiation_event(negotiation_id=negotiation_id,
+            event_type='INFORMATION_ACTION_SELECTED', actor_type='agent', actor_id='scheduling_agent',
+            payload={'planner_version': frontier.planner_version, 'input_hash': frontier.input_hash,
+                     'event_revision_id': frontier.event_revision_id,
+                     'information_actions': snapshot['information_actions'],
+                     'sufficient_progress_disposition': frontier.sufficient_progress_disposition})
+    return frontier
+
+
 def _run_negotiation_case_tick(
     *,
     negotiation_id: str,
@@ -1324,6 +1350,7 @@ def _run_negotiation_case_tick(
             "message": "case_terminal",
         }
 
+    frontier = _refresh_decision_frontier(negotiation_id, store)
     locale = _default_locale_for_negotiation(negotiation)
 
     if negotiation["status"] != "pending_decliner_input":
@@ -1347,55 +1374,64 @@ def _run_negotiation_case_tick(
                 "vote_prompts_deduplicated": 0,
                 "reason": "missing_candidate_slot",
             }
-        slot = slots[-1]
         participants = store.list_negotiation_participants(negotiation_id)
         prompts_sent = 0
         deduped = 0
-        for participant in participants:
-            attendee_id = str(participant["attendee_user_id"])
-            if attendee_id == str(slot["proposed_by_user_id"]):
-                continue
-            if int(participant.get("required_for_consent") or 0) != 1:
-                continue
-            target_id = str(participant.get("message_user_id") or attendee_id)
-            if not target_id:
-                continue
-            message = _render_ask_vote_message(
-                negotiation=negotiation,
-                participant=participant,
-                slot=slot,
-                locale=locale,
-            )
-            reserved = store.reserve_outbound_message(
-                negotiation_id=negotiation_id,
-                message_type="ask_attendee_vote",
-                participant_user_id=attendee_id,
-                slot_id=str(slot["slot_id"]),
-                round_number=int(slot["round_number"]),
-                payload={"text": message, "target_id": target_id},
-            )
-            if not reserved["reserved"]:
-                deduped += 1
-                continue
-            provider_message_id = _send_attendee_message(
-                send_message,
-                [target_id],
-                message,
-            )
-            if provider_message_id:
-                store.mark_outbound_message_sent(
-                    message_event_id=reserved["message"]["message_event_id"],
-                    provider_message_id=provider_message_id,
+        eligible = {(a.target_ref, a.slot_id) for a in frontier.information_actions
+                    if a.action == 'ASK' and a.expected_frontier_impact == 'MATERIAL'}
+        for slot in sorted(slots, key=lambda item: str(item['slot_id'])):
+            for participant in participants:
+                attendee_id = str(participant['attendee_user_id'])
+                if (attendee_id, slot['slot_id']) not in eligible:
+                    continue
+                target_id = str(participant.get("message_user_id") or attendee_id)
+                if not target_id:
+                    continue
+                message = _render_ask_vote_message(
+                    negotiation=negotiation,
+                    participant=participant,
+                    slot=slot,
+                    locale=locale,
                 )
-            store.update_negotiation_participant_response(
-                negotiation_id=negotiation_id,
-                attendee_user_id=attendee_id,
-                latest_response_status="asked",
-                latest_slot_id=str(slot["slot_id"]),
-                contacted=True,
-                responded=False,
-            )
-            prompts_sent += 1
+                reserved = store.reserve_outbound_message(
+                    negotiation_id=negotiation_id,
+                    message_type="ask_attendee_vote",
+                    participant_user_id=attendee_id,
+                    slot_id=str(slot["slot_id"]),
+                    round_number=int(slot["round_number"]),
+                    payload={"text": message, "target_id": target_id},
+                )
+                if not reserved["reserved"]:
+                    deduped += 1
+                    continue
+                provider_message_id = _send_attendee_message(
+                    send_message,
+                    [target_id],
+                    message,
+                )
+                if provider_message_id:
+                    store.mark_outbound_message_sent(
+                        message_event_id=reserved["message"]["message_event_id"],
+                        provider_message_id=provider_message_id,
+                    )
+                store.update_negotiation_participant_response(
+                    negotiation_id=negotiation_id,
+                    attendee_user_id=attendee_id,
+                    latest_response_status="asked",
+                    latest_slot_id=str(slot["slot_id"]),
+                    contacted=True,
+                    responded=False,
+                )
+                prompts_sent += 1
+        if frontier.decision_frontier and frontier.sufficient_progress_disposition == 'PRESENT_FRONTIER':
+            store.record_negotiation_event(negotiation_id=negotiation_id,
+                event_type='DECISION_FRONTIER_PRESENTED', actor_type='agent', actor_id='scheduling_agent',
+                payload={'planner_version': frontier.planner_version, 'input_hash': frontier.input_hash,
+                         'event_revision_id': frontier.event_revision_id,
+                         'decision_frontier': [o.option_id for o in frontier.decision_frontier]})
+            store.transition_negotiation_state(negotiation_id, expected_state='collecting_votes',
+                next_state='awaiting_requester_decision', patch={}, actor_id='system:decision_governor')
+            negotiation = store.get_negotiation(negotiation_id)
         return {
             "negotiation_id": negotiation_id,
             "status": negotiation["status"],
@@ -2534,8 +2570,11 @@ def _run_negotiation_followup_business(
                 or 3
             )
 
+        material_targets = _material_followup_targets(negotiation_id, store)
         reminder_specs: list[dict[str, Any]] = []
         for participant in store.list_negotiation_participants(negotiation_id):
+            if material_targets is not None and str(participant['attendee_user_id']) not in material_targets:
+                continue
             if not _followup_reminder_needed(participant):
                 continue
             followup_count = int(participant.get("followup_count") or 0)
@@ -2619,7 +2658,8 @@ def _run_negotiation_followup_business(
         next_followup_at: str | None = None
         next_followup_job_id: str | None = None
         remaining_followup = any(
-            _followup_reminder_needed(participant)
+            (material_targets is None or str(participant['attendee_user_id']) in material_targets)
+            and _followup_reminder_needed(participant)
             and int(participant.get("followup_count") or 0) < max_followups
             for participant in store.list_negotiation_participants(negotiation_id)
         )
@@ -3384,6 +3424,7 @@ def submit_negotiation_reply(
         else "declined_slot",
         latest_slot_id=slot_id,
     )
+    _refresh_decision_frontier(negotiation_id, store)
     if vote_value == "yes" and store.required_participants_have_yes(
         negotiation_id=negotiation_id,
         slot_id=slot_id,

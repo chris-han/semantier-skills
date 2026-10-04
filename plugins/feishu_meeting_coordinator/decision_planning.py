@@ -234,7 +234,8 @@ def evaluate_information_actions(basis):
             material = False
             for status in ('AVAILABLE', 'UNAVAILABLE'):
                 response = {'slot_id': action.slot_id, 'attendee_user_id': p['attendee_user_id'], 'status': status}
-                alternate = replace(basis, availability=basis.availability + (response,))
+                alternate = replace(basis, availability=tuple(r for r in basis.availability
+                    if (r['slot_id'], r['attendee_user_id']) != (action.slot_id, p['attendee_user_id'])) + (response,))
                 _, _, _, _, changed = _frontiers(alternate)
                 if tuple(o.option_id for o in changed) != current:
                     material = True
