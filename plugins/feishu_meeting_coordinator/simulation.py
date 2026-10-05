@@ -50,11 +50,11 @@ def simulate_meeting(*, workspace_user_count=4, stable_seed='workshop-v1', workf
         request['compiled_program'] = compiled_program
     with tempfile.TemporaryDirectory(prefix='run-', dir=parent) as directory:
         root = Path(directory)
-        env = {**os.environ, 'SEMANTIER_AUTH_DB_PATH': str(root / 'auth.sqlite'),
-               'SEMANTIER_LOCAL_STATE_DIR': str(root / 'platform'),
-               'PYTHONPATH': os.pathsep.join(str(p) for p in sys.path if p)}
-        for key in ('HERMES_SESSION_USER_ID', 'HERMES_SESSION_WORKSPACE_OWNER_ID', 'SEMANTIER_USER_ID', 'SEMANTIER_WORKSPACE_ID'):
-            env.pop(key, None)
+        env = {'PATH':os.environ.get('PATH',''),'LANG':os.environ.get('LANG','C.UTF-8'),
+               'SEMANTIER_AUTH_DB_PATH':str(root/'auth.sqlite'),
+               'SEMANTIER_LOCAL_STATE_DIR':str(root/'platform'),
+               'SEMANTIER_EOS_DB_PATH':str(root/'platform'/'eos.db'),
+               'PYTHONPATH':os.pathsep.join(str(p) for p in sys.path if p)}
         result = subprocess.run([sys.executable, '-m', 'feishu_meeting_coordinator.simulation'],
                                 input=canonical_json(request), text=True, capture_output=True, env=env, timeout=90)
         if result.returncode:
