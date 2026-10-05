@@ -128,8 +128,12 @@ def _create_state_evolution_run(ctx, body):
         trace=meeting_simulation.simulate_meeting(workspace_user_count=user_count,stable_seed=stable_seed,
             workflow_version=str(source['workflow_version']),scenario=scenario_id,context=ctx,
             compiled_program=plan['programs']['workflow'])
+        recorded_at=datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+        reducer_projection=invoke_state_evolution_worker(ctx,'normalize-meeting-trace',worker_pin=worker_pin,payload={
+            'simulationRef':trace['scenarioRef'],'definitionHash':plan['sourceMap']['workflow.run-status']['artifact_hash'],
+            'recordedAt':recorded_at,'events':[{'id':step['eventId'],'kind':step['eventType'],'payload':step} for step in trace['steps']]})
         run=project_meeting_result(trace,plan,attempt_id='attempt_'+uuid4().hex,
-            recorded_at=datetime.now(timezone.utc).isoformat().replace('+00:00','Z'))
+            recorded_at=recorded_at,reducer_projection=reducer_projection)
         seal_evolution_result(store,ir,plan,run,trusted_scope=scope,resolved_source_pins=ir['sourcePins'],
             trusted_producer=producer_pin)
         return {'ir':ir,'plan':plan,'run':run}
