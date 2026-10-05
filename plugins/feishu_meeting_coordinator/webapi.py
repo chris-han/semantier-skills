@@ -130,6 +130,7 @@ def _create_state_evolution_run(ctx, body):
             compiled_program=plan['programs']['workflow'])
         recorded_at=datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
         reducer_projection=invoke_state_evolution_worker(ctx,'normalize-meeting-trace',worker_pin=worker_pin,payload={
+            'workflowDefinition':native_source,
             'simulationRef':trace['scenarioRef'],'definitionHash':plan['sourceMap']['workflow.run-status']['artifact_hash'],
             'recordedAt':recorded_at,'events':[{'id':step['eventId'],'kind':step['eventType'],'payload':step} for step in trace['steps']]})
         run=project_meeting_result(trace,plan,attempt_id='attempt_'+uuid4().hex,
