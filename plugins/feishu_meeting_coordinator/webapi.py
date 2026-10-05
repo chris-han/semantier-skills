@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter
 
@@ -23,6 +25,8 @@ router = APIRouter(tags=["webapi-gateway"])
 
 ROUTE_POLICY_MAP = {
     ("GET", "/system/meeting-coordinator/simulation"): "authenticated",
+    ("POST", "/system/meeting-coordinator/state-evolution/runs"): "authenticated",
+    ("GET", "/system/meeting-coordinator/state-evolution/runs/{run_id}"): "authenticated",
     ("POST", "/callbacks/feishu/meeting-coordinator/reply"): "public",
     ("GET", "/system/meeting-coordinator/workflow-binding"): "authenticated",
     ("POST", "/system/meeting-coordinator/negotiations/start"): "authenticated",
@@ -63,6 +67,118 @@ async def system_meeting_coordinator_simulation(request: Request, workspace_user
                                 workflow_version=workflow_version, scenario=scenario)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _create_state_evolution_run(ctx, body):
+    import yaml
+    from contracts.state_evolution import evolution_hash
+    from services.state_evolution_compiler import build_meeting_evolution_binding, compile_meeting_evolution
+    from services.state_evolution_service import (
+        authenticated_state_evolution_store,
+        invoke_state_evolution_worker,
+        project_meeting_result,
+        seal_evolution_result,
+        state_evolution_worker_build_pin,
+    )
+    session_ref=body.get('sessionRef')
+    scenario_id=body.get('scenario','A')
+    user_count=body.get('workspaceUserCount',4)
+    stable_seed=body.get('stableSeed','workshop-v1')
+    if not isinstance(session_ref,str) or not session_ref.strip():
+        raise ValueError('SESSION_REF_REQUIRED')
+    if scenario_id not in tuple('ABCDEF'):
+        raise ValueError('INVALID_SCENARIO')
+    if type(user_count) is not int or not 3 <= user_count <= 12:
+        raise ValueError('INVALID_WORKSPACE_USER_COUNT')
+    if not isinstance(stable_seed,str) or not 1 <= len(stable_seed) <= 128:
+        raise ValueError('INVALID_STABLE_SEED')
+    with authenticated_state_evolution_store(ctx,session_ref=session_ref,channel='web') as (store,scope,_session_id):
+        worker_pin=state_evolution_worker_build_pin()
+        resolved=invoke_state_evolution_worker(ctx,'describe-meeting-source',worker_pin=worker_pin)
+        native_source=resolved['definition']
+        execution=resolved['execution']
+        source_path=Path(__file__).with_name('workflows')/'meeting-negotiation.workflow.yaml'
+        source=yaml.safe_load(source_path.read_text(encoding='utf-8'))
+        profile_root=Path(__file__).with_name('simulation_profiles')
+        profile_seeds={name:yaml.safe_load((profile_root/f'{name}.yaml').read_text(encoding='utf-8'))
+                       for name in ('requester','cooperative','conflict')}
+        from . import simulation as meeting_simulation
+        package_root=Path(__file__).resolve().parent
+        repo_root=Path(__file__).resolve().parents[3]
+        import contracts.state_evolution as evolution_contract
+        import services.state_evolution_clock as evolution_clock
+        import services.state_evolution_compiler as evolution_compiler
+        import services.state_evolution_service as evolution_service
+        import agents.meeting_demo_users as meeting_demo_users
+        def code_pin(kind,reference,paths,base):
+            inventory={str(path.relative_to(base)).replace('\\','/'):hashlib.sha256(path.read_bytes()).hexdigest()
+                       for path in sorted(paths)}
+            return {'artifact_kind':kind,'artifact_ref':reference,'artifact_hash':evolution_hash(inventory)}
+        producer_paths=sorted(path for path in package_root.rglob('*.py') if 'tests' not in path.parts)+[Path(meeting_demo_users.__file__).resolve()]
+        compiler_paths=[Path(module.__file__).resolve() for module in
+            (evolution_contract,evolution_compiler,evolution_clock,evolution_service)]
+        producer_pin=code_pin('meeting_simulation_producer','feishu-meeting-coordinator:simulation-source',producer_paths,repo_root)
+        compiler_pin=code_pin('state_evolution_compiler','semantier:state-evolution-meeting-compiler',compiler_paths,repo_root)
+        binding=build_meeting_evolution_binding(scope=scope,source=source,execution=execution,native_source=native_source,
+            profile_seeds=profile_seeds,compiler=compiler_pin,backend=worker_pin,producer=producer_pin,
+            effective_at=datetime.now(timezone.utc).isoformat().replace('+00:00','Z'))
+        scenario={'id':scenario_id,'overrides':{'workspace_user_count':user_count,'stable_seed':stable_seed},'scheduledInputs':[]}
+        ir,plan=compile_meeting_evolution(binding,source,execution,scenario=scenario,compiler=compiler_pin,
+            backend=worker_pin,producer=producer_pin,native_source=native_source)
+        trace=meeting_simulation.simulate_meeting(workspace_user_count=user_count,stable_seed=stable_seed,
+            workflow_version=str(source['workflow_version']),scenario=scenario_id,context=ctx,
+            compiled_program=plan['programs']['workflow'])
+        recorded_at=datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+        reducer_projection=invoke_state_evolution_worker(ctx,'normalize-meeting-trace',worker_pin=worker_pin,payload={
+            'workflowDefinition':native_source,
+            'simulationRef':trace['scenarioRef'],'definitionHash':plan['sourceMap']['workflow.run-status']['artifact_hash'],
+            'recordedAt':recorded_at,'events':[{'id':step['eventId'],'kind':step['eventType'],'payload':step} for step in trace['steps']]})
+        run=project_meeting_result(trace,plan,attempt_id='attempt_'+uuid4().hex,
+            recorded_at=recorded_at,reducer_projection=reducer_projection)
+        seal_evolution_result(store,ir,plan,run,trusted_scope=scope,resolved_source_pins=ir['sourcePins'],
+            trusted_producer=producer_pin)
+        return {'ir':ir,'plan':plan,'run':run}
+
+
+@router.post('/system/meeting-coordinator/state-evolution/runs')
+async def system_meeting_coordinator_state_evolution_run(request: Request):
+    from agents.auth_session import request_context_from_request
+    from starlette.concurrency import run_in_threadpool
+    ctx=request_context_from_request(request)
+    if not ctx.authenticated:
+        raise HTTPException(status_code=401,detail='authentication required')
+    try:
+        body=await request.json()
+        if not isinstance(body,dict):
+            raise ValueError('INVALID_REQUEST')
+        return await run_in_threadpool(_create_state_evolution_run,ctx,body)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403,detail=str(exc)) from exc
+    except ValueError as exc:
+        message=str(exc)
+        status=403 if message.startswith('FORBIDDEN_') else 404 if message=='SESSION_NOT_FOUND' else 422 if message.startswith('INVALID_') or message.endswith('_REQUIRED') else 409
+        raise HTTPException(status_code=status,detail=message) from exc
+
+
+@router.get('/system/meeting-coordinator/state-evolution/runs/{run_id}')
+async def system_meeting_coordinator_state_evolution_replay(run_id: str, request: Request, sessionRef: str):
+    from agents.auth_session import request_context_from_request
+    from services.state_evolution_service import authenticated_state_evolution_store,replay_evolution_run
+    from starlette.concurrency import run_in_threadpool
+    ctx=request_context_from_request(request)
+    if not ctx.authenticated:
+        raise HTTPException(status_code=401,detail='authentication required')
+    def replay():
+        with authenticated_state_evolution_store(ctx,session_ref=sessionRef,channel='web') as (store,scope,_session_id):
+            return replay_evolution_run(store,run_id,trusted_scope=scope)
+    try:
+        return await run_in_threadpool(replay)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403,detail=str(exc)) from exc
+    except ValueError as exc:
+        message=str(exc)
+        status=403 if message.startswith('FORBIDDEN_') else 404 if message in {'SESSION_NOT_FOUND','EVOLUTION_MISSING_ARTIFACT'} else 409
+        raise HTTPException(status_code=status,detail=message) from exc
 
 
 def _utc_now_iso() -> str:

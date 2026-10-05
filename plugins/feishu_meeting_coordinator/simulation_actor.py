@@ -1,6 +1,9 @@
 """One workspace-local deterministic actor; JSON Feishu envelopes are its only API."""
 from __future__ import annotations
 import json
+import math
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 import sys
 
@@ -11,7 +14,7 @@ def requester_command(ctx, state, command, state_path):
     from . import store as store_module
     from .store import store_for_context
     from .gateway import _refresh_decision_frontier, apply_requester_decision
-    store_module.utc_now_iso = lambda: '2026-10-05T00:00:00Z'
+    store_module.utc_now_iso = lambda: command.get('clockAt','2026-10-05T00:00:00Z')
     db = store_for_context(ctx)
     operation = command['operation']
     if operation == 'initialize_negotiation':
@@ -19,7 +22,7 @@ def requester_command(ctx, state, command, state_path):
         binding = {'workspace_owner_id': ctx.workspace_id, 'creator_user_id': ctx.user_id, 'platform': 'feishu',
                    'chat_id': 'simulation-chat', 'thread_id': None, 'session_id': state['sessionRef'],
                    'session_key': state['sessionRef'], 'hermes_home': str(ctx.hermes_home),
-                   'delivery_adapter_key': None, 'source': 'simulation_fixture', 'captured_at': '2026-10-05T00:00:00Z'}
+                   'delivery_adapter_key': None, 'source': 'simulation_fixture', 'captured_at': command.get('clockAt','2026-10-05T00:00:00Z')}
         monitor = db.start_monitor({'workspace_id': ctx.workspace_id, 'creator_user_id': ctx.user_id,
             'event_id': command['scenarioRef'], 'event_revision_id': 'simulation-revision:1', 'calendar_id': 'simulation-calendar',
             'creator_delivery_binding': binding, 'meeting_title': 'Synthetic meeting', **state['slots']['original'],
@@ -64,7 +67,8 @@ def requester_command(ctx, state, command, state_path):
         frontier = _refresh_decision_frontier(state['caseId'], store=db)
         event = next(e for e in reversed(db.list_negotiation_events(state['caseId'])) if e['event_type'] == 'DECISION_FRONTIER_COMPUTED')
         result = {'decision': project_decision_frontier(frontier), 'sourceEventRef': event['event_id'],
-                  'slotSubjects': {slot_id: subject for subject, slot_id in state['slotIds'].items()}}
+                  'slotSubjects': {slot_id: subject for subject, slot_id in state['slotIds'].items()},
+                  **({'sourceEventCreatedAt':event['created_at']} if 'clockAt' in command else {})}
     elif operation == 'prepare_wait':
         from agents.durable_responsibility import TIMER, WAIT_EXTERNAL
         from .durable_runtime import MeetingResponsibilityRuntime
@@ -72,19 +76,23 @@ def requester_command(ctx, state, command, state_path):
         runtime = MeetingResponsibilityRuntime(store=db, cron=None)
         item = runtime.ensure(state['caseId'])
         claim = runtime.responsibilities.claim(responsibility_id=item.responsibility_id, owner_id='simulation-requester')
-        timer = _register_followup_timer(negotiation_id=state['caseId'], store=db, scheduled_at='2026-10-05T00:00:20Z')
+        timer = _register_followup_timer(negotiation_id=state['caseId'], store=db, scheduled_at=state['timerDeadlineAt'] if 'clockAt' in command else '2026-10-05T00:00:20Z')
         wait = runtime.responsibilities.register_wait(claim, kind=TIMER, source_ref=timer.timer_id,
             correlation_key=state['caseId'], lifecycle_state=WAIT_EXTERNAL, continuation_disposition=WAIT_EXTERNAL,
             deadline_at=timer.scheduled_at, session_ref=state['sessionRef'])
         runtime._record_waiting(negotiation_id=state['caseId'], responsibility_id=item.responsibility_id)
         state.update(responsibilityRef=item.responsibility_id, timerRef=timer.timer_id)
-        result = {'waitRef': wait.wait_id, 'responsibilityRef': item.responsibility_id, 'timerRef': timer.timer_id}
+        result = {'waitRef': wait.wait_id, 'responsibilityRef': item.responsibility_id, 'timerRef': timer.timer_id, 'deadlineAt':timer.scheduled_at,
+                  **({'registeredAt':wait.created_at} if 'clockAt' in command else {})}
     elif operation == 'timer_signal':
         from agents.durable_responsibility import TIMER
         from .durable_runtime import MeetingResponsibilityRuntime
         runtime = MeetingResponsibilityRuntime(store=db, cron=None)
         item = runtime.existing(state['caseId'])
         occurrence = runtime.timer_store.delivery_event(timer_id=state['timerRef'])
+        if 'clockAt' in command and datetime.fromisoformat(command['clockAt'].replace('Z','+00:00')) < datetime.fromisoformat(occurrence.scheduled_at.replace('Z','+00:00')):
+            state_path.write_text(json.dumps(state,sort_keys=True))
+            return {'accepted':False,'reason':'timer_not_due','observedAt':command['clockAt']}
         wake = runtime.responsibilities.accept_wake(responsibility_id=item.responsibility_id, kind=TIMER,
             source_ref=occurrence.timer_id, correlation_key=state['caseId'], dedupe_key=occurrence.dedupe_key,
             expected_checkpoint_version=item.checkpoint_version)
@@ -92,7 +100,8 @@ def requester_command(ctx, state, command, state_path):
             runtime._record_wake(negotiation_id=state['caseId'], responsibility_id=item.responsibility_id,
                                  kind=TIMER, source_ref=occurrence.timer_id, wake_id=wake.wake_id)
         result = {'accepted': wake.accepted, 'wakeKind': TIMER, 'wakeSourceRef': occurrence.timer_id,
-                  'responsibilityRef': item.responsibility_id, 'wakeRef': wake.wake_id}
+                  'responsibilityRef': item.responsibility_id, 'wakeRef': wake.wake_id,
+                  **({'observedAt':next(event['created_at'] for event in reversed(runtime.responsibilities.events(item.responsibility_id)) if event['payload'].get('wake_id') == wake.wake_id)} if 'clockAt' in command else {})}
     elif operation == 'present_frontier':
         frontier = db.latest_decision_frontier(state['caseId'])
         db.record_negotiation_event(negotiation_id=state['caseId'], event_type='DECISION_FRONTIER_PRESENTED',
@@ -110,11 +119,46 @@ def requester_command(ctx, state, command, state_path):
     return result
 
 
+
+@contextmanager
+def _fixture_clock(clock_at):
+    """Scope one injected scenario time to this fixture command; restore helpers."""
+    from agents import durable_responsibility
+    from . import store, gateway, durable_runtime
+    instant = datetime.fromisoformat(clock_at.replace('Z','+00:00'))
+    bindings = [(store,'utc_now_iso',lambda:clock_at),
+                (durable_responsibility,'_now_iso',lambda:clock_at),
+                (gateway,'_now_utc',lambda:instant),
+                (durable_runtime,'_utc_now',lambda:instant)]
+    originals = [(module,name,getattr(module,name)) for module,name,_ in bindings]
+    try:
+        for module,name,value in bindings:
+            setattr(module,name,value)
+        yield
+    finally:
+        for module,name,value in originals:
+            setattr(module,name,value)
+
+
+def _actor_time(state, command):
+    if 'timeBasis' not in state:
+        return None
+    from contracts.state_evolution import EvolutionTimeBasisV1
+    basis = EvolutionTimeBasisV1.model_validate(state['timeBasis'])
+    instant = command.get('semanticTime')
+    if basis.kind != 'domain' or basis.unit != 'second' or basis.epoch is None or isinstance(instant,bool) or not isinstance(instant,(int,float)) or not math.isfinite(instant) or not basis.start <= instant <= basis.stop or instant < state.get('semanticTime',basis.start):
+        raise ValueError('INVALID_SCENARIO_CLOCK')
+    state['semanticTime'] = instant
+    from services.state_evolution_clock import meeting_time_iso
+    return meeting_time_iso(basis,instant)
+
 def actor_command(ctx, command):
     if not ctx or not ctx.authenticated:
         raise PermissionError('SIMULATION_GOVERNED_IDENTITY_REQUIRED')
     if command.get('workspaceRef', ctx.workspace_id) != ctx.workspace_id:
         raise PermissionError('SIMULATION_FOREIGN_WORKSPACE')
+    if 'clockAt' in command:
+        raise ValueError('SIMULATION_CLOCK_DERIVED_ONLY')
     root = ctx.hermes_home / 'simulation'
     root.mkdir(exist_ok=True)
     state_path = root / 'local-state.json'
@@ -130,7 +174,11 @@ def actor_command(ctx, command):
         return {'userRef': ctx.user_id, 'workspaceRef': ctx.workspace_id, 'ownerRef': ctx.user_id,
                 'profileRef': state['profileRef'], 'sessionRef': state['sessionRef'], 'role': state['role']}
     state = json.loads(state_path.read_text())
+    clock_at = _actor_time(state,command)
     if state['role'] == 'requester':
+        if clock_at is not None:
+            with _fixture_clock(clock_at):
+                return requester_command(ctx,state,{**command,'clockAt':clock_at},state_path)
         return requester_command(ctx, state, command, state_path)
     if command['operation'] != 'receive_feishu':
         raise ValueError('SIMULATION_TRANSPORT_ONLY')
@@ -150,6 +198,8 @@ def actor_command(ctx, command):
              'sessionRef': state['sessionRef'], 'facts': export}
     with (root / 'transport.jsonl').open('a') as stream:
         stream.write(json.dumps({'received': message, 'exported': reply}, sort_keys=True) + '\n')
+    if clock_at is not None:
+        state_path.write_text(json.dumps(state,sort_keys=True))
     return reply
 
 
