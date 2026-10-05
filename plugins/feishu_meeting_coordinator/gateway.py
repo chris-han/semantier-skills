@@ -2097,21 +2097,35 @@ def negotiation_case_start(
         workflow_binding=binding,
         runtime_context=ctx,
     )
-    result = negotiation
     if payload.get('ensure_kanban') is not False:
-        result = ensure_negotiation_kanban_task(
+        ensure_negotiation_kanban_task(
             negotiation_id=str(negotiation['negotiation_id']), store=store, kanban=kanban,
         )
 
     from .durable_runtime import MeetingResponsibilityRuntime
 
-    MeetingResponsibilityRuntime(
+    from agents.durable_responsibility import READY, DurableResponsibilityError
+
+    runtime = MeetingResponsibilityRuntime(
         store=store,
         cron=cron,
         feishu_client=feishu_client,
         kanban=kanban,
-    ).run(str(negotiation['negotiation_id']))
-    return result
+    )
+    case_id = str(negotiation['negotiation_id'])
+    responsibility = runtime.ensure(case_id)
+    # Start retries bind the same responsibility; waits and in-flight claims
+    # remain under their event/dispatcher owner rather than executing again.
+    if responsibility.lifecycle_state == READY:
+        try:
+            runtime.run(case_id)
+        except DurableResponsibilityError:
+            # The atomic core claim may have been won after our READY read.
+            # Preserve that persisted identity; real READY failures propagate.
+            current = runtime.existing(case_id)
+            if current is None or current.lifecycle_state == READY:
+                raise
+    return store.get_negotiation(case_id)
 
 
 def negotiation_case_stop(

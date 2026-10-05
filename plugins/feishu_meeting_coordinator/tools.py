@@ -96,17 +96,9 @@ class _LocalCronClient:
         return resolved
 
     def _ensure_no_agent_script(self, *, profile: str, script: str, name: str) -> None:
-        try:
-            from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
-
-            profile_home = Path(
-                resolve_profile_env(normalize_profile_name(profile))
-            ).resolve()
-        except Exception as exc:
-            raise RuntimeError(
-                f"failed to resolve meeting coordinator profile {profile!r}: {exc}"
-            ) from exc
-        scripts_dir = profile_home / "scripts"
+        # Hermes cron resolves scripts against the bound workspace home.
+        # Named profiles do not belong to the current create_job wire contract.
+        scripts_dir = self.hermes_home / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
         script_path = (scripts_dir / script).resolve()
         try:
@@ -300,7 +292,6 @@ class _LocalCronClient:
                 skills=resolved_skills,
                 deliver=deliver,
                 repeat=repeat,
-                profile=profile,
                 no_agent=no_agent,
                 script=script,
                 model=model,

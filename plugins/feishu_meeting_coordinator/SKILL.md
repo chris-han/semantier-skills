@@ -17,6 +17,7 @@ tags:
 
 When a user books a Feishu meeting with `feishu_meeting_create`, the tool creates the event and leaves RSVP follow-up orchestration to the durable negotiation follow-up flow.
 
+<!-- runtime-owner: WORKFLOW; invariant-class: WORKFLOW_HEURISTIC -->
 Infer meeting parameters from the conversation as much as possible before asking the user. For example, infer title, date, start time, duration/end time, timezone, online meeting format, organizer, and named participants when the user's request is unambiguous. Build an attendee list from invitees only and exclude the requester. If named attendees are not already Feishu `open_id` values or emails, call `feishu_contacts_search` with `attendees` or `queries` so each attendee is searched, then pass the resolved attendee `open_id` values into meeting creation. Ask the user only when a required value is missing or ambiguous, such as multiple matching contacts, unclear date, missing duration/end time, or uncertain attendee identity.
 
 For `feishu_meeting_create` in an active Feishu chat, do not fill `requester_open_id` from an attendee, invitee, meeting calendar, or guessed contact. The tool derives the requester from the Feishu chat initiator.
@@ -24,6 +25,12 @@ For `feishu_meeting_create` in an active Feishu chat, do not fill `requester_ope
 When a user asks for RSVP status, call live Feishu attendee status first. Do not infer RSVP state from memory.
 
 The plugin handles follow-up reminders, creator escalation, delivery retry, and cron repair.
+
+For a one-time meeting question, read the relevant owner and answer without creating a durable case. For an outcome that needs continued coordination, use `feishu_meeting_negotiation_case_start` against the existing governed monitor and event-revision identity. Resolve an ambiguous meeting or permission scope with Fix -> Infer -> Recommend -> Ask; avoid making the user choose a Job/Task/Workflow mode.
+
+<!-- runtime-owner: TOOL; invariant-class: EXPLAINED_AND_ENFORCED; enforced-by: gateway.negotiation_case_start; store.create_or_get_negotiation_case; agents.durable_responsibility.DurableResponsibilityStore.claim -->
+Retry or reconnect binds the same monitor/event-revision case and responsibility. Waiting, running and terminal responsibilities stay under their existing event/dispatcher owner. Only a returned persisted case identity establishes durable work; a selected slot, tool completion or workflow receipt does not by itself establish a confirmed calendar effect. The source's finalization state/attempt and external receipt own that claim.
+
 
 For a Kanban task whose body has `metadata.task_type` equal to `feishu_meeting_negotiation`, run the durable negotiation worker through `feishu_meeting_negotiation_kanban_worker_tick` with the Kanban task id and full task body. Do not manually send ad hoc messages for `pending_decliner_input`; the worker calls the deterministic negotiation tick, sends the decliner prompt once, and blocks or completes the Kanban task according to persisted state.
 
@@ -33,6 +40,7 @@ Use the registered Feishu tools directly for contact lookup, chat lookup, meetin
 - `feishu_chats_search`
 - `feishu_chat_members_get`
 - `feishu_meeting_create`
+- `feishu_meeting_negotiation_case_start`
 - `feishu_meeting_negotiation_case_tick`
 - `feishu_meeting_negotiation_kanban_worker_tick`
 - `feishu_meeting_negotiation_start`
