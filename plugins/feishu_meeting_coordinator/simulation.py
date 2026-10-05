@@ -63,16 +63,30 @@ def simulate_meeting(*, workspace_user_count=4, stable_seed='workshop-v1', workf
 
 
 def _validate_program(program):
-    if program.get('schemaVersion') != 'meeting_evolution_program.v1' or program.get('programHash') != _hash({key:value for key,value in program.items() if key != 'programHash'}):
+    from contracts.state_evolution import evolution_hash
+    if program.get('schemaVersion') != 'meeting_evolution_program.v1' or program.get('programHash') != evolution_hash({key:value for key,value in program.items() if key != 'programHash'}):
         raise ValueError('INVALID_BINDING: compiled program integrity')
     if not program.get('operators') or not program.get('controllers'):
         raise ValueError('INVALID_BINDING: empty compiled program')
+    if 'clockConfig' in program:
+        _clock_for(program)
 
+
+
+def _clock_for(program):
+    from services.state_evolution_clock import MeetingScenarioClock
+    config = program['clockConfig']
+    clock = MeetingScenarioClock(config['timeBasis'],config['schedule'],followup_delay=config['followupDelay'])
+    return clock
 
 def _run(request):
     program = request.get('compiled_program')
     if program is not None:
         _validate_program(program)
+    clock = _clock_for(program) if program is not None and 'clockConfig' in program else None
+    def phase(name):
+        if clock is not None:
+            clock.advance_phase(name)
     def operation(node, legacy):
         if program is None:
             return legacy
@@ -91,6 +105,10 @@ def _run(request):
     identity = {'workspaceUserCount': count, 'stableSeed': request['stable_seed'],
                 'workflowVersion': request['workflow_version'], 'plannerVersion': PLANNER_VERSION,
                 'scenario': scenario, 'profileSeedsHash': _hash(seeds), 'generatorVersion': 'meeting-workspace-scenario.v2'}
+    if clock is not None:
+        from contracts.state_evolution import evolution_hash
+        identity['generatorVersion'] = 'meeting-workspace-scenario.v3'
+        identity['clockBasisHash'] = evolution_hash(program['clockConfig'])
     scenario_ref = 'meeting-scenario:' + _hash(identity).split(':')[1]
     suffix = _hash(identity).split(':')[1][:16]
     org = 'simulation-org-' + suffix
@@ -118,11 +136,14 @@ def _run(request):
              'dominated': {'start_time': '2026-10-06T07:00:00Z', 'end_time': '2026-10-06T07:30:00Z', 'timezone': 'UTC'}}
     actors = {}; roots = []
     def command(actor, payload):
+        if clock is not None and clock.semantic_time is not None:
+            payload = {**payload,'semanticTime':clock.semantic_time}
         actor.stdin.write(canonical_json(payload) + '\n'); actor.stdin.flush()
         result = json.loads(actor.stdout.readline())
         if not result['ok']: raise PermissionError(result['error'])
         return result['result']
     try:
+        phase('INITIALIZE')
         for i, p in enumerate(participants):
             root, _ = ensure_workspace_paths(p['workspaceRef']); roots.append(root)
             env = {**os.environ, 'SEMANTIER_USER_ID': p['userRef'], 'SEMANTIER_WORKSPACE_ID': p['workspaceRef']}
@@ -136,7 +157,8 @@ def _run(request):
             seed = seeds['requester' if i == 0 else 'cooperative' if i % 2 else 'conflict']
             bound = command(actor, {'operation': 'initialize', 'localState': {
                 'availability': availability, 'slots': slots, 'late': i == 2, 'proposer': i == 2,
-                'profileRef': p['profileRef'], 'sessionRef': p['sessionRef'], 'role': p['role']}, 'instructions': seed['instructions']})
+                'profileRef': p['profileRef'], 'sessionRef': p['sessionRef'], 'role': p['role'],
+                **({'timeBasis':program['clockConfig']['timeBasis'],'timerDeadlineAt':clock.deadline_iso()} if clock is not None and clock.semantic_time is not None else {})}, 'instructions': seed['instructions']})
             if any(bound[key] != p[key] for key in ('userRef', 'workspaceRef', 'ownerRef', 'sessionRef')):
                 raise ValueError('SIMULATION_BINDING_MISMATCH')
         requester = participants[0]
@@ -152,6 +174,8 @@ def _run(request):
                 'decision': frontier,
                 'participants': [{'participantRef': p['participantRef'], 'state': states[p['userRef']]} for p in participants],
                 'knownEvidence': list(known), 'simulationOnly': True, **detail}
+            if clock is not None:
+                step.update(clock.event_coordinate())
             if program is not None and node in program['operators']:
                 step['producerOperation'] = program['operators'][node]['operation']
             steps.append(step)
@@ -169,8 +193,10 @@ def _run(request):
             record('FEISHU_TRANSPORT_DELIVERED', 'collect_votes', actor=requester['userRef'], transport=reply)
             return reply
         record('SIMULATION_STARTED', 'observe_meeting_event')
+        phase('COLLECT_ORIGINAL')
         for p in participants[1:]:
             reply = transport(p, 'original')
+        phase('COLLECT_CANDIDATES')
         for subject in ('alternative', 'blocked', 'dominated'):
             for p in participants[1:]:
                 if scenario == 'D' and subject == 'blocked' and p is participants[-1]: continue
@@ -180,22 +206,36 @@ def _run(request):
             observation = command(requester_actor, {'operation': operation('form_decision_frontier', 'planner_tick')})
             frontier = observation['decision']
             slot_ids.update({subject: slot_id for slot_id, subject in observation['slotSubjects'].items()})
-            record('DECISION_FRONTIER_COMPUTED', 'form_decision_frontier', actor=requester['userRef'], sourceEventRef=observation['sourceEventRef'])
+            record('DECISION_FRONTIER_COMPUTED', 'form_decision_frontier', actor=requester['userRef'], sourceEventRef=observation['sourceEventRef'],
+                   **({'domainCreatedAt':observation['sourceEventCreatedAt']} if clock is not None and clock.semantic_time is not None else {}))
+        phase('INITIAL_FRONTIER')
         compute()
         asks = [a for a in frontier['informationActions'] if a['action'] == 'ASK']
         if asks:
+            phase('WAIT_REGISTER')
             wait = command(requester_actor, {'operation': operation('wait_followup', 'prepare_wait')})
-            record('RESPONSIBILITY_WAIT_STARTED', 'wait_followup', waitRef=wait['waitRef'], resumeConditionRef='material_participant_reply_or_timer')
+            record('RESPONSIBILITY_WAIT_STARTED', 'wait_followup', waitRef=wait['waitRef'], resumeConditionRef='material_participant_reply_or_timer',
+                   **({'deadlineAt':wait['deadlineAt'],'domainRegisteredAt':wait['registeredAt']} if clock is not None and clock.semantic_time is not None else {}))
+            if clock is not None and 'EARLY_TIMER_DELIVERY' in clock.phases:
+                phase('EARLY_TIMER_DELIVERY')
+                early = command(requester_actor, {'operation':program['controllers']['wait_to_poll']['releaseOperation']})
+                if early['accepted']:
+                    raise ValueError('EARLY_TIMER_ACCEPTED')
+                record('TIMER_DELIVERY_UNAVAILABLE','wait_followup',reason=early['reason'])
+            phase('TIMER_DELIVERY')
             wake = command(requester_actor, {'operation': program['controllers']['wait_to_poll']['releaseOperation'] if program else 'timer_signal'})
             if not wake['accepted']: raise ValueError('SIMULATION_TIMER_WAKE_REJECTED')
             record('RESPONSIBILITY_WAKE_ACCEPTED', 'wait_followup', actor=requester['userRef'], wakeKind=wake['wakeKind'],
-                   wakeSourceRef=wake['wakeSourceRef'], responsibilityRef=wake['responsibilityRef'])
+                   wakeSourceRef=wake['wakeSourceRef'], responsibilityRef=wake['responsibilityRef'],
+                   **({'domainOccurredAt':wake['observedAt']} if clock is not None and clock.semantic_time is not None else {}))
+            phase('FOLLOWUP')
             for info in asks:
                 subject = next(subject for subject, slot_id in slot_ids.items() if slot_id == info['subjectRef'])
                 p = next(p for p in participants if p['userRef'] == info['targetRef'])
                 record('INFORMATION_ACTION_SELECTED', 'evaluate_information_value', actor=requester['userRef'], action='ASK', subjectRef=subject)
                 reply = transport(p, subject, True)
                 compute()
+        phase('PRESENT')
         record('DECISION_FRONTIER_PRESENTED', 'requester_decision', actor=requester['userRef'], boundary='REQUESTER_REQUIRED')
         command(requester_actor, {'operation': operation('requester_decision', 'present_frontier')})
         if scenario == 'E':
