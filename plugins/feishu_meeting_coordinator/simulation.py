@@ -24,13 +24,21 @@ def _hash(value):
 
 
 def simulate_meeting(*, workspace_user_count=4, stable_seed='workshop-v1', workflow_version='2', scenario='A',
-                     context=None, fixture_root=None):
+                     context=None, fixture_root=None, compiled_program=None):
     if type(workspace_user_count) is not int or not 3 <= workspace_user_count <= 12:
         raise ValueError('workspace_user_count must be an integer from 3 to 12')
     if scenario not in tuple('ABCDEF') or not isinstance(stable_seed, str) or not 1 <= len(stable_seed) <= 128:
         raise ValueError('invalid simulation scenario or seed')
     if not isinstance(workflow_version, str) or not 1 <= len(workflow_version) <= 32:
         raise ValueError('invalid workflow version')
+    if compiled_program is not None:
+        if not isinstance(compiled_program, dict):
+            raise ValueError('invalid compiled program')
+        inputs = compiled_program.get('scenarioInputs')
+        if not isinstance(inputs, dict):
+            raise ValueError('compiled program scenario inputs required')
+        if inputs.get('workspace_user_count') != workspace_user_count or inputs.get('stable_seed') != stable_seed:
+            raise ValueError('compiled program scenario mismatch')
     if context is not None:
         if not context.authenticated:
             raise PermissionError('SIMULATION_AUTHENTICATION_REQUIRED')
@@ -44,11 +52,14 @@ def simulate_meeting(*, workspace_user_count=4, stable_seed='workshop-v1', workf
                'workflow_version': workflow_version, 'scenario': scenario}
     with tempfile.TemporaryDirectory(prefix='run-', dir=parent) as directory:
         root = Path(directory)
-        env = {**os.environ, 'SEMANTIER_AUTH_DB_PATH': str(root / 'auth.sqlite'),
-               'SEMANTIER_LOCAL_STATE_DIR': str(root / 'platform'),
-               'PYTHONPATH': os.pathsep.join(str(p) for p in sys.path if p)}
-        for key in ('HERMES_SESSION_USER_ID', 'HERMES_SESSION_WORKSPACE_OWNER_ID', 'SEMANTIER_USER_ID', 'SEMANTIER_WORKSPACE_ID'):
-            env.pop(key, None)
+        env = {
+            'PATH': os.environ.get('PATH', ''),
+            'LANG': os.environ.get('LANG') or 'C.UTF-8',
+            'SEMANTIER_AUTH_DB_PATH': str(root / 'auth.sqlite'),
+            'SEMANTIER_LOCAL_STATE_DIR': str(root / 'platform'),
+            'SEMANTIER_EOS_DB_PATH': str(root / 'eos.sqlite'),
+            'PYTHONPATH': os.pathsep.join(str(p) for p in sys.path if p),
+        }
         result = subprocess.run([sys.executable, '-m', 'feishu_meeting_coordinator.simulation'],
                                 input=canonical_json(request), text=True, capture_output=True, env=env, timeout=90)
         if result.returncode:
