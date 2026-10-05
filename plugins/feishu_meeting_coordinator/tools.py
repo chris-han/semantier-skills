@@ -932,13 +932,10 @@ def _text(value: Any) -> str:
 
 
 def _session_env(name: str) -> str:
-    env_value = os.getenv(name, "")
-    if env_value:
-        return env_value
     try:
         from gateway.session_context import get_session_env
-    except Exception:
-        return ""
+    except ImportError:
+        return os.getenv(name, "")
     return get_session_env(name, "")
 
 
