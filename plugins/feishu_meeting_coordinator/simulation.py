@@ -24,7 +24,11 @@ def _hash(value):
 
 
 def simulate_meeting(*, workspace_user_count=4, stable_seed='workshop-v1', workflow_version='2', scenario='A',
-                     context=None, fixture_root=None):
+                     context=None, fixture_root=None, compiled_program=None):
+    if compiled_program is not None:
+        _validate_program(compiled_program)
+        if 'scenarioInputs' in compiled_program and compiled_program['scenarioInputs'] != {'workspace_user_count':workspace_user_count,'stable_seed':stable_seed,'scenario':scenario,'workflow_version':workflow_version}:
+            raise ValueError('INVALID_BINDING: producer scenario mismatch')
     if type(workspace_user_count) is not int or not 3 <= workspace_user_count <= 12:
         raise ValueError('workspace_user_count must be an integer from 3 to 12')
     if scenario not in tuple('ABCDEF') or not isinstance(stable_seed, str) or not 1 <= len(stable_seed) <= 128:
@@ -42,6 +46,8 @@ def simulate_meeting(*, workspace_user_count=4, stable_seed='workshop-v1', workf
     parent.mkdir(parents=True, exist_ok=True)
     request = {'workspace_user_count': workspace_user_count, 'stable_seed': stable_seed,
                'workflow_version': workflow_version, 'scenario': scenario}
+    if compiled_program is not None:
+        request['compiled_program'] = compiled_program
     with tempfile.TemporaryDirectory(prefix='run-', dir=parent) as directory:
         root = Path(directory)
         env = {**os.environ, 'SEMANTIER_AUTH_DB_PATH': str(root / 'auth.sqlite'),
@@ -56,12 +62,31 @@ def simulate_meeting(*, workspace_user_count=4, stable_seed='workshop-v1', workf
         return json.loads(result.stdout)
 
 
+def _validate_program(program):
+    if program.get('schemaVersion') != 'meeting_evolution_program.v1' or program.get('programHash') != _hash({key:value for key,value in program.items() if key != 'programHash'}):
+        raise ValueError('INVALID_BINDING: compiled program integrity')
+    if not program.get('operators') or not program.get('controllers'):
+        raise ValueError('INVALID_BINDING: empty compiled program')
+
+
 def _run(request):
+    program = request.get('compiled_program')
+    if program is not None:
+        _validate_program(program)
+    def operation(node, legacy):
+        if program is None:
+            return legacy
+        mapping = program['operators'].get(node)
+        if mapping is None or mapping.get('mappingKind') != 'producer-operation':
+            raise ValueError('INVALID_BINDING: missing producer operation '+node)
+        return mapping['operation']
     from agents.auth_db import ensure_auth_db, save_users, save_organizations
     from agents.meeting_demo_users import seed_meeting_demo_users
     from agents.gateway_identity import ensure_workspace_paths
     seeds = {name: yaml.safe_load((Path(__file__).with_name('simulation_profiles') / f'{name}.yaml').read_text())
              for name in ('requester', 'cooperative', 'conflict')}
+    if program is not None and 'profileSeedsHash' in program and program['profileSeedsHash'] != _hash(seeds):
+        raise ValueError('INVALID_BINDING: producer profile source mismatch')
     count = request['workspace_user_count']; scenario = request['scenario']
     identity = {'workspaceUserCount': count, 'stableSeed': request['stable_seed'],
                 'workflowVersion': request['workflow_version'], 'plannerVersion': PLANNER_VERSION,
@@ -116,7 +141,7 @@ def _run(request):
                 raise ValueError('SIMULATION_BINDING_MISMATCH')
         requester = participants[0]
         requester_actor = actors[requester['userRef']]
-        command(requester_actor, {'operation': 'initialize_negotiation', 'participants': participants,
+        command(requester_actor, {'operation': operation('ensure_negotiation_case', 'initialize_negotiation'), 'participants': participants,
                                   'scenarioRef': scenario_ref, 'scenario': scenario})
         states = {p['userRef']: 'READY' for p in participants}; steps = []; frontier = None; known = []; slot_ids = {}
         def record(event_type, node, actor=None, action=None, boundary=None, **detail):
@@ -127,16 +152,18 @@ def _run(request):
                 'decision': frontier,
                 'participants': [{'participantRef': p['participantRef'], 'state': states[p['userRef']]} for p in participants],
                 'knownEvidence': list(known), 'simulationOnly': True, **detail}
+            if program is not None and node in program['operators']:
+                step['producerOperation'] = program['operators'][node]['operation']
             steps.append(step)
         def transport(p, subject, released=False):
             message = {'fromUserRef': requester['userRef'], 'fromWorkspaceRef': requester['workspaceRef'],
                        'toUserRef': p['userRef'], 'toWorkspaceRef': p['workspaceRef'], 'subjectRef': subject,
                        'messageRef': f'{scenario_ref}:message:{len(steps):03d}', 'timerReleased': released}
             record('FEISHU_TRANSPORT_SENT', 'collect_candidate_slots', actor=requester['userRef'], action='ASK', transport=message)
-            reply = command(actors[p['userRef']], {'operation': 'receive_feishu', 'message': message})
+            reply = command(actors[p['userRef']], {'operation': operation('collect_candidate_slots', 'receive_feishu'), 'message': message})
             record('FEISHU_TRANSPORT_EXPORTED', 'collect_votes', actor=p['userRef'], action='REPLY', transport=reply,
                    localFacts=reply['facts'])
-            admitted = command(requester_actor, {'operation': 'receive_feishu', 'message': reply})
+            admitted = command(requester_actor, {'operation': operation('collect_votes', 'receive_feishu'), 'message': reply})
             known[:] = admitted['knownEvidence']
             states[p['userRef']] = 'WAITING_TIMER' if reply['facts']['availability'] == 'UNKNOWN' else 'REPLIED'
             record('FEISHU_TRANSPORT_DELIVERED', 'collect_votes', actor=requester['userRef'], transport=reply)
@@ -150,16 +177,16 @@ def _run(request):
                 transport(p, subject)
         def compute():
             nonlocal frontier
-            observation = command(requester_actor, {'operation': 'planner_tick'})
+            observation = command(requester_actor, {'operation': operation('form_decision_frontier', 'planner_tick')})
             frontier = observation['decision']
             slot_ids.update({subject: slot_id for slot_id, subject in observation['slotSubjects'].items()})
             record('DECISION_FRONTIER_COMPUTED', 'form_decision_frontier', actor=requester['userRef'], sourceEventRef=observation['sourceEventRef'])
         compute()
         asks = [a for a in frontier['informationActions'] if a['action'] == 'ASK']
         if asks:
-            wait = command(requester_actor, {'operation': 'prepare_wait'})
+            wait = command(requester_actor, {'operation': operation('wait_followup', 'prepare_wait')})
             record('RESPONSIBILITY_WAIT_STARTED', 'wait_followup', waitRef=wait['waitRef'], resumeConditionRef='material_participant_reply_or_timer')
-            wake = command(requester_actor, {'operation': 'timer_signal'})
+            wake = command(requester_actor, {'operation': program['controllers']['wait_to_poll']['releaseOperation'] if program else 'timer_signal'})
             if not wake['accepted']: raise ValueError('SIMULATION_TIMER_WAKE_REJECTED')
             record('RESPONSIBILITY_WAKE_ACCEPTED', 'wait_followup', actor=requester['userRef'], wakeKind=wake['wakeKind'],
                    wakeSourceRef=wake['wakeSourceRef'], responsibilityRef=wake['responsibilityRef'])
@@ -170,13 +197,15 @@ def _run(request):
                 reply = transport(p, subject, True)
                 compute()
         record('DECISION_FRONTIER_PRESENTED', 'requester_decision', actor=requester['userRef'], boundary='REQUESTER_REQUIRED')
-        command(requester_actor, {'operation': 'present_frontier'})
+        command(requester_actor, {'operation': operation('requester_decision', 'present_frontier')})
         if scenario == 'E':
-            command(requester_actor, {'operation': 'requester_decision'})
+            command(requester_actor, {'operation': operation('cancel_meeting', 'requester_decision')})
             record('REQUESTER_DECISION_RECORDED', 'requester_decision', actor=requester['userRef'], requesterChoice='CANCEL')
             record('SIMULATED_EFFECT_COMPLETED', 'cancel_meeting', actor=requester['userRef'], boundary='TERMINAL', requesterChoice='CANCEL', effectState='SIMULATED_CANCELLED')
         result = {'schemaVersion': 'workflow_simulation_trace.v1', 'scenarioRef': scenario_ref, 'identity': identity,
                   'participants': participants, 'requesterProfileRef': seeds['requester']['profile_id'], 'steps': steps}
+        if program is not None:
+            result['compiledProgramHash'] = program['programHash']
         result['semanticTraceHash'] = _hash(result)
         return result
     finally:
