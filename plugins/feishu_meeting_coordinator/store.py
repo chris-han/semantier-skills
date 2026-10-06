@@ -136,9 +136,14 @@ class MeetingCoordinatorStore:
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path))
+        # This database is shared with the core responsibility/timer owners.
+        # Establish their journal policy before concurrent domain writes begin.
+        conn = sqlite3.connect(str(self.path), timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=FULL")
+        conn.execute("PRAGMA busy_timeout=30000")
         return conn
 
     def _ensure_schema(self) -> None:
