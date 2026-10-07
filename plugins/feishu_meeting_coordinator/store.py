@@ -1667,6 +1667,8 @@ class MeetingCoordinatorStore:
         kanban_task_id: str | None = None,
         kanban_run_id: int | None = None,
     ) -> dict[str, Any]:
+        if event_type == 'SEMANTIC_BASIS_CONSUMED':
+            raise ValueError('CONTINUATION_PRODUCER_READ_REQUIRED')
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -2612,6 +2614,42 @@ class MeetingCoordinatorStore:
                 (negotiation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def consume_semantic_basis(self, *, ctx, projection_store, checkpoint_service,
+                               build_store, authority_resolver, basis_pin,
+                               comparison, read_mode):
+        """Native read and immutable input event share the owner write fence."""
+        from pathlib import Path
+        from services.decision_trajectory_projection_service import DecisionTrajectoryProjectionService
+        if not ctx or not ctx.authenticated:
+            raise ValueError('CONTINUATION_AUTHENTICATED_CONTEXT_REQUIRED')
+        if not Path(self.path).resolve().is_relative_to(Path(ctx.workspace_root).resolve()):
+            raise ValueError('CONTINUATION_PATH_OUTSIDE_WORKSPACE')
+        # The pending case is resolved from the exact basis, not caller labels.
+        from contracts.decision_trajectory_projection import SemanticContinuationBasisV1
+        basis = projection_store.get_derived_projection(basis_pin.artifact_ref,
+            organization_id=ctx.organization_id, workspace_id=ctx.workspace_id,
+            contract_type=SemanticContinuationBasisV1)
+        if len(basis.pending_owner_refs) != 1:
+            raise ValueError('CONTINUATION_CASE_MISMATCH')
+        case_id = basis.pending_owner_refs[0]
+        with self._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', (case_id,)).fetchone()
+            if case is None:
+                raise KeyError(case_id)
+            events = [dict(row) for row in conn.execute('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', (case_id,))]
+            if any(row['event_type'] == 'SEMANTIC_BASIS_CONSUMED' for row in events):
+                raise ValueError('CONTINUATION_ALREADY_CONSUMED')
+            native_state = {'case':dict(case), 'events':events, 'slots':self.list_candidate_slots(case_id)}
+            command, consumed = DecisionTrajectoryProjectionService.resolve_meeting_continuation(
+                ctx=ctx, projection_store=projection_store, checkpoint_service=checkpoint_service,
+                build_store=build_store, authority_resolver=authority_resolver, basis_pin=basis_pin,
+                comparison=comparison, read_mode=read_mode, native_state=native_state)
+            self._record_negotiation_event(conn, negotiation_id=case_id,
+                event_type='SEMANTIC_BASIS_CONSUMED', actor_type='runtime',
+                actor_id='meeting-coordinator-runtime', payload={'consumption':consumed})
+        return command, consumed
 
     def read_workflow_execution(self, negotiation_id: str) -> dict[str, Any]:
         """Read the pinned native projection; retrieval never emits a receipt."""

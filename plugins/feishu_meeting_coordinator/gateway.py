@@ -4120,3 +4120,35 @@ def escalation_retry_tick(
         "failed_permanent": failed_permanent,
         "remaining_non_terminal": len(remaining),
     }
+
+
+def continue_from_semantic_basis(ctx, *, store, projection_store, checkpoint_service,
+                                 build_store, authority_resolver, basis_pin,
+                                 comparison, read_mode, calendar_client, requester_confirmation=False):
+    """Native deterministic consumer. Caller supplies refs, never a command."""
+    if not ctx or not ctx.authenticated:
+        raise ValueError('CONTINUATION_AUTHENTICATED_CONTEXT_REQUIRED')
+    if requester_confirmation is not True:
+        raise PermissionError('requester_confirmation_required')
+    command, consumed = store.consume_semantic_basis(ctx=ctx,
+        projection_store=projection_store, checkpoint_service=checkpoint_service,
+        build_store=build_store, authority_resolver=authority_resolver, basis_pin=basis_pin,
+        comparison=comparison, read_mode=read_mode)
+    case_id = command['case_id']
+    if command['boundary'] == 'before_proposal':
+        submit_negotiation_reply({**command['proposal'], 'negotiation_id':case_id}, store=store)
+    selected = next((slot for slot in store.list_candidate_slots(case_id)
+        if all(slot[key] == command['expected_slot'][key] for key in ('start_time','end_time','timezone'))), None)
+    if selected is None:
+        raise ValueError('CONTINUATION_SELECTED_SLOT_UNAVAILABLE')
+    if command['boundary'] != 'before_finalize':
+        submit_negotiation_reply({'negotiation_id':case_id,
+            'participant_user_id':command['proposal']['participant_user_id'],
+            'message_id':command['event'] + ':vote', 'intent':'vote_yes',
+            'slot_id':selected['slot_id']}, store=store)
+    result = finalize_negotiation_case({'negotiation_id':case_id,
+        'selected_slot_id':selected['slot_id'], 'decision_source':'consent',
+        'requested_by_user_id':ctx.user_id, 'requester_confirmation':True},
+        store=store, calendar_client=calendar_client)
+    return {'consumption':consumed, 'finalization':result,
+            'evidence':store.read_workflow_execution(case_id)}
