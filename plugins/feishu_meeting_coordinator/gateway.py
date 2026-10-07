@@ -818,16 +818,7 @@ def _dispatch_native_followup_effect(
     attendee_user_id = str(item["attendee_user_id"])
     message_event_id = str(item["message_event_id"])
 
-    def replay_send(*, canonical_payload: bytes, idempotency_key: str):
-        payload = json.loads(canonical_payload.decode("utf-8"))
-        return client.send_attendee_message(
-            attendee_open_ids=[str(payload["target_id"])],
-            message=str(payload["message"]),
-            idempotency_key=idempotency_key,
-        )
-
     provider = FeishuMessageEvidenceAdapter(
-        send_message=replay_send,
         get_message=lambda *, message_id: client.get_message(message_id=message_id),
     )
 

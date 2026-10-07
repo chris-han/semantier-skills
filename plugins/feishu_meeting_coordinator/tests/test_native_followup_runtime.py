@@ -3,6 +3,12 @@ from __future__ import annotations
 # ruff: noqa: E402
 
 import hashlib
+import json
+import os
+import subprocess
+import sys
+
+import pytest
 from pathlib import Path
 
 import agents
@@ -12,10 +18,11 @@ _AUDIT_AGENTS = _REPO_ROOT / ".worktrees" / "hermes-upstream-audit" / "src" / "a
 if str(_AUDIT_AGENTS) not in agents.__path__:
     agents.__path__.insert(0, str(_AUDIT_AGENTS))
 
-from agents.effect_outbox import AtomicEffectOutbox, COMPLETED
+from agents.effect_outbox import AtomicEffectOutbox, COMPLETED, EFFECT_UNKNOWN, READY
 from agents.internal_continuation import ContinuationAdmissionStore, PENDING
 from agents.timer_occurrence import ACCEPTED, TimerOccurrenceStore
 from feishu_meeting_coordinator.gateway import (
+    _dispatch_native_followup_effect,
     ensure_negotiation_followup_cron,
     negotiation_followup_cron_tick,
     submit_negotiation_reply,
@@ -367,7 +374,8 @@ def test_legacy_recurring_tick_migrates_without_running_reminder_body(tmp_path):
 
 
 
-def test_uncertain_provider_send_reconciles_without_duplicate_domain_apply(tmp_path):
+@pytest.mark.parametrize("age", [60, 3599, 3600, 3601, 86400, None])
+def test_uncertain_provider_send_remains_unknown_without_duplicate_domain_apply(tmp_path, age):
     store, negotiation = _setup(tmp_path)
     store.update_workspace_settings("ws_1", max_followups=1)
     cron = FakeCron()
@@ -397,31 +405,88 @@ def test_uncertain_provider_send_reconciles_without_duplicate_domain_apply(tmp_p
         for item in store.list_negotiation_participants(negotiation["negotiation_id"])
         if item["attendee_user_id"] == "ou_a"
     )
-    assert participant["followup_count"] == 1
+    assert participant["followup_count"] == 0
     assert result["wake_accepted"] is True
-    assert "followups_sent" not in result
-
     native_calls = [call for call in feishu.calls if call["idempotency_key"]]
-    assert len(native_calls) == 2
-    assert native_calls[0]["idempotency_key"] == native_calls[1]["idempotency_key"]
-    assert native_calls[0]["message_id"] == native_calls[1]["message_id"]
-
+    assert len(native_calls) == 1
     with store._connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT effect_id, state, receipt_ref, provider_correlation_ref
-            FROM semantier_effect_outbox
-            WHERE workflow_id=? AND effect_type=?
-            """,
-            (
-                negotiation["negotiation_id"],
-                "FOLLOWUP_REMINDER:ou_a",
-            ),
-        ).fetchall()
-    assert len(rows) == 1
-    assert rows[0]["state"] == COMPLETED
-    assert rows[0]["receipt_ref"] == native_calls[0]["message_id"]
-    assert rows[0]["provider_correlation_ref"] == native_calls[0]["message_id"]
+        row = conn.execute(
+            "SELECT effect_id FROM semantier_effect_outbox WHERE workflow_id=? AND effect_type=?",
+            (negotiation["negotiation_id"], "FOLLOWUP_REMINDER:ou_a"),
+        ).fetchone()
+    outbox = AtomicEffectOutbox(store.path)
+    original = outbox.get(row["effect_id"])
+    payload = json.loads(original.canonical_payload)
+    reserved = store.get_native_followup_message(
+        negotiation_id=negotiation["negotiation_id"], attendee_user_id="ou_a", semantic_round=1,
+    )
+    item = dict(payload, effect_id=original.effect_id, attendee_user_id="ou_a",
+                message_event_id=reserved["message_event_id"])
+
+    # If called outside the finite dedupe window, this fake creates a duplicate.
+    def expired_send(**kwargs):
+        feishu.calls.append(kwargs)
+        if age is None or age >= 3600:
+            feishu.messages["duplicate"] = kwargs
+        return {"delivered": ["ou_a"], "message_id": "duplicate"}
+    feishu.send_attendee_message = expired_send
+    for recovery_store in [store, MeetingCoordinatorStore(store.path)]:
+        for _ in range(2):
+            recovered = _dispatch_native_followup_effect(
+                negotiation_id=negotiation["negotiation_id"], store=recovery_store,
+                client=feishu, item=item,
+            )
+            assert recovered["state"] == EFFECT_UNKNOWN
+            assert recovered["applied"] is False
+    from concurrent.futures import ThreadPoolExecutor
+    def recover(_):
+        return _dispatch_native_followup_effect(
+            negotiation_id=negotiation["negotiation_id"], store=MeetingCoordinatorStore(store.path),
+            client=feishu, item=item,
+        )
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        concurrent = list(pool.map(recover, range(8)))
+    assert all(r["state"] == EFFECT_UNKNOWN and r["applied"] is False for r in concurrent)
+    assert len(feishu.calls) == 1
+    assert "duplicate" not in feishu.messages
+    assert outbox.get(original.effect_id) == original
+
+    script = """
+import json, sys
+from feishu_meeting_coordinator.gateway import _dispatch_native_followup_effect
+from feishu_meeting_coordinator.store import MeetingCoordinatorStore
+class ReadOnlyGuard:
+    calls = []
+    def send_attendee_message(self, **kwargs):
+        self.calls.append("send")
+        raise AssertionError('fresh process attempted send')
+    def get_message(self, **kwargs):
+        self.calls.append("get")
+        raise AssertionError('missing correlation attempted lookup')
+print(json.dumps(_dispatch_native_followup_effect(
+    negotiation_id=sys.argv[2], store=MeetingCoordinatorStore(sys.argv[1]),
+    client=ReadOnlyGuard(), item=json.loads(sys.argv[3]))))
+assert ReadOnlyGuard.calls == []
+"""
+    process = subprocess.run(
+        [sys.executable, "-c", script, str(store.path), negotiation["negotiation_id"], json.dumps(item)],
+        capture_output=True, text=True, check=True, env=os.environ.copy(),
+    )
+    assert json.loads(process.stdout)["state"] == EFFECT_UNKNOWN
+    assert json.loads(process.stdout)["applied"] is False
+    assert outbox.get(original.effect_id) == original
+
+    # Independent provider correlation permits GET-only completion, once.
+    outbox.pin_provider_correlation(effect_id=original.effect_id,
+                                    correlation_ref=native_calls[0]["message_id"])
+    for _ in range(2):
+        recovered = _dispatch_native_followup_effect(
+            negotiation_id=negotiation["negotiation_id"], store=store, client=feishu, item=item,
+        )
+        assert recovered["state"] == COMPLETED
+    assert len(feishu.calls) == 1
+    participant = next(p for p in store.list_negotiation_participants(negotiation["negotiation_id"]) if p["attendee_user_id"] == "ou_a")
+    assert participant["followup_count"] == 1
 
 
 def test_ambiguous_reply_admits_one_durable_internal_continuation(tmp_path):
@@ -476,3 +541,46 @@ def test_ambiguous_reply_admits_one_durable_internal_continuation(tmp_path):
         ).fetchone()[0]
     assert inbound_count == 1
     assert clarification_events == 1
+
+
+@pytest.mark.parametrize("evidence, expected", [
+    ({"found": False}, EFFECT_UNKNOWN),
+    ({"found": False, "confirmed_not_applied": True}, READY),
+    ({"found": True, "message": {"deleted": True}}, COMPLETED),
+    ({}, EFFECT_UNKNOWN),
+])
+def test_known_correlation_gateway_reads_only(tmp_path, evidence, expected):
+    store, negotiation = _setup(tmp_path)
+    payload = {"target_id": "ou_a", "message": "reminder"}
+    with store._connect() as conn:
+        reserved = store.reserve_native_followup_effect(
+            conn, negotiation_id=negotiation["negotiation_id"], attendee_user_id="ou_a",
+            target_id="ou_a", message="reminder", semantic_round=1,
+        )
+        effect = AtomicEffectOutbox.enqueue_ready(
+            conn, workflow_id=negotiation["negotiation_id"], effect_type="FOLLOWUP_REMINDER:ou_a",
+            semantic_round=1, canonical_payload=json.dumps(payload).encode(),
+        )
+    outbox = AtomicEffectOutbox(store.path)
+    assert outbox.claim_dispatch(effect_id=effect.effect_id, attempt_id="accepted")
+    outbox.pin_provider_correlation(effect_id=effect.effect_id, correlation_ref="om_known")
+    outbox.mark_effect_unknown(effect_id=effect.effect_id, attempt_id="accepted", failure_detail="lost_response")
+    class Provider:
+        sends = 0
+        gets = []
+        def send_attendee_message(self, **kwargs):
+            self.sends += 1
+            raise AssertionError("reconciliation must not send")
+        def get_message(self, *, message_id):
+            self.gets.append(message_id)
+            return evidence
+    client = Provider()
+    item = dict(payload, effect_id=effect.effect_id, attendee_user_id="ou_a",
+                message_event_id=reserved["message"]["message_event_id"])
+    result = _dispatch_native_followup_effect(
+        negotiation_id=negotiation["negotiation_id"], store=store, client=client, item=item,
+    )
+    assert result["state"] == expected
+    assert result["applied"] is (expected == COMPLETED)
+    assert client.sends == 0
+    assert client.gets == ["om_known"]
