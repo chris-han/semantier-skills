@@ -229,7 +229,7 @@ class MeetingResponsibilityRuntime:
 
     def ensure(self, negotiation_id: str):
         negotiation = self.store.get_negotiation(negotiation_id)
-        return self.responsibilities.ensure(
+        record = self.responsibilities.ensure(
             responsibility_kind=RESPONSIBILITY_KIND,
             workspace_id=str(negotiation["workspace_id"]),
             domain_ref=negotiation_id,
@@ -237,6 +237,8 @@ class MeetingResponsibilityRuntime:
             workflow_instance_id=negotiation_id,
             session_ref=str(negotiation.get("session_id") or "") or None,
         )
+        self.responsibilities.bind_execution(record.responsibility_id)
+        return record
 
     def existing(self, negotiation_id: str):
         negotiation = self.store.get_negotiation(negotiation_id)
