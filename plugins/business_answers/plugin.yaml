@@ -1,0 +1,10 @@
+name: business_answers
+version: 0.1.0
+description: Source-bounded receivables answers through Semantier native core.
+author: Semantier
+kind: standalone
+platforms: [linux, macos, windows]
+provides_tools:
+  - business_answers_receivables_run
+  - business_answers_receivables_status
+  - business_answers_receivables_read_answer

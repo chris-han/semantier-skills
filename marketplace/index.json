@@ -180,6 +180,25 @@
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/requirements_change_management",
       "repo": "https://github.com/chris-han/semantier-skills"
+    },
+    {
+      "id": "chris-han/semantier-skills/plugins/business_answers",
+      "name": "business_answers",
+      "version": "0.1.0",
+      "type": "plugin",
+      "path": "plugins/business_answers",
+      "description": "Source-bounded receivables answers and native descriptive ontology checks",
+      "author": "Semantier",
+      "category": "Finance",
+      "tags": [
+        "receivables",
+        "ontology",
+        "business-answers"
+      ],
+      "source": "custom-marketplace",
+      "trust_level": "community",
+      "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/business_answers",
+      "repo": "https://github.com/chris-han/semantier-skills"
     }
   ]
 }

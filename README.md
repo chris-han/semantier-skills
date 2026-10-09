@@ -6,6 +6,8 @@ Plugin authoring guidance lives in [docs/derived/semantier-marketplace-plugin-cr
 
 ## Included Packages
 
+- `business_answers` — `chris-han/semantier-skills/plugins/business_answers`
+
 - `feishu_meeting_coordinator`
 - `auto_resume_screening`
 - `vc_github_opportunity_radar`

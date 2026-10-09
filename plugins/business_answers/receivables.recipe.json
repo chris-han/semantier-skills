@@ -1,0 +1,1 @@
+{"recipe_id":"receivables.v1","version":"1","native_owner":"services.business_answers_receivables_service.BusinessAnswersReceivablesService","input":"authorized_company_dataset_import","objects":["Customer","Invoice","SourceSnapshot"],"questions":["outstanding_by_customer_currency","overdue_by_customer_currency"],"governance_state":"candidate"}
