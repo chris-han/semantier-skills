@@ -2167,6 +2167,7 @@ def negotiation_case_finalize(
     cron: CronClient | None = None,
     kanban: KanbanClient | None = None,
     lock_ttl_seconds: int = NEGOTIATION_CASE_LOCK_TTL_SECONDS,
+    runtime_context=None,
 ) -> dict[str, Any]:
     return finalize_negotiation_case(
         payload,
@@ -2175,6 +2176,7 @@ def negotiation_case_finalize(
         cron=cron,
         kanban=kanban,
         lock_ttl_seconds=lock_ttl_seconds,
+        runtime_context=runtime_context,
     )
 
 
@@ -3610,6 +3612,7 @@ def finalize_negotiation_case(
     cron: CronClient | None = None,
     kanban: KanbanClient | None = None,
     lock_ttl_seconds: int = NEGOTIATION_CASE_LOCK_TTL_SECONDS,
+    runtime_context=None,
 ) -> dict[str, Any]:
     negotiation_id = str(payload.get("negotiation_id") or "").strip()
     selected_slot_id = str(payload.get("selected_slot_id") or "").strip()
@@ -3625,6 +3628,9 @@ def finalize_negotiation_case(
         raise PermissionError("requester_confirmation_required")
 
     negotiation = store.get_negotiation(negotiation_id)
+    if negotiation.get('workflow_binding_json'):
+        from contracts.workflow_execution import authorize_meeting_requester_mutation
+        authorize_meeting_requester_mutation(negotiation, requested_by_user_id, runtime_context)
     owner = f"requester:{requested_by_user_id}"
     if not store.acquire_negotiation_case_lock(
         negotiation_id,
@@ -4149,6 +4155,6 @@ def continue_from_semantic_basis(ctx, *, store, projection_store, checkpoint_ser
     result = finalize_negotiation_case({'negotiation_id':case_id,
         'selected_slot_id':selected['slot_id'], 'decision_source':'consent',
         'requested_by_user_id':ctx.user_id, 'requester_confirmation':True},
-        store=store, calendar_client=calendar_client)
+        store=store, calendar_client=calendar_client, runtime_context=ctx)
     return {'consumption':consumed, 'finalization':result,
             'evidence':store.read_workflow_execution(case_id)}

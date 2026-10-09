@@ -3896,6 +3896,7 @@ class MeetingCoordinatorStore:
                     terminal_reason or "finalization failed",
                     now,
                     now,
+                    now,
                     negotiation_id,
                 ),
             )

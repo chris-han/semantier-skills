@@ -613,6 +613,7 @@ async def system_meeting_coordinator_negotiation_finalize(
                 "requested_by_user_id": str(ctx.user_id or ""),
             },
             store=store,
+            runtime_context=ctx,
             calendar_client=MeetingCoordinatorWebApiCalendarClient(ctx),
             cron=MeetingCoordinatorWebApiCronClient(ctx),
         )
