@@ -15,7 +15,9 @@ def _error(error_code: str, message: str | None = None, **extra: Any) -> str:
 
 
 def _candidate_id_from_name(candidate_name: str, index: int) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9]+", "_", candidate_name.strip().lower()).strip("_")
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", candidate_name.strip().lower()).strip(
+        "_"
+    )
     return normalized or f"candidate_{index}"
 
 
@@ -57,6 +59,11 @@ def screen_resumes(args: dict[str, Any], **_kw: Any) -> str:
     from .artifacts import write_screening_artifact
     from .extraction import extract_text_from_resume, resolve_uploaded_resume_path
     from .scoring import rank_resumes
+
+    if args.get("mode") == "lineage_v1":
+        return _screen_lineage(args)
+    if args.get("mode") not in (None, "legacy_heuristic"):
+        return _error("SCREENING_MODE_UNSUPPORTED")
 
     job_profile = args.get("job_profile")
     resume_paths = args.get("resume_paths")
@@ -106,7 +113,12 @@ def screen_resumes(args: dict[str, Any], **_kw: Any) -> str:
     payload = {
         "status": "ok",
         "job_profile": job_profile,
-        "extracted": [{key: value for key, value in item.items() if key != "text"} for item in extracted],
+        "mode": "legacy_heuristic",
+        "interpretation": "keyword_heuristic_not_competence_proof",
+        "extracted": [
+            {key: value for key, value in item.items() if key != "text"}
+            for item in extracted
+        ],
         "errors": errors,
         "rankings": ranking["rankings"],
     }
@@ -132,7 +144,9 @@ def extract_role_terms(args: dict[str, Any], **_kw: Any) -> str:
     if timeout_seconds <= 0:
         return _error("TIMEOUT_SECONDS_INVALID", "timeout_seconds must be positive")
     if max_terms_per_source <= 0:
-        return _error("MAX_TERMS_PER_SOURCE_INVALID", "max_terms_per_source must be positive")
+        return _error(
+            "MAX_TERMS_PER_SOURCE_INVALID", "max_terms_per_source must be positive"
+        )
 
     result = extract_missing_role_terms(
         [str(url) for url in source_urls] if source_urls is not None else None,
@@ -140,3 +154,83 @@ def extract_role_terms(args: dict[str, Any], **_kw: Any) -> str:
         max_terms_per_source=max_terms_per_source,
     )
     return json.dumps(result, ensure_ascii=False)
+
+
+def _screen_lineage(args: dict[str, Any]) -> str:
+    """IO-only adapter; core owns all interpretation and predicate semantics."""
+    import hashlib
+    import uuid
+    from services.resume_screening_lineage import (
+        evaluate_lineage,
+        load_teaching_basis,
+        document_projection,
+    )
+    from .extraction import list_session_upload_records
+    from .artifacts import write_screening_artifact
+
+    paths = args.get("resume_paths")
+    if not isinstance(paths, list) or len(paths) != 1 or not args.get("jd_path"):
+        return _error("LINEAGE_PAIR_REQUIRED")
+    manifest = list_session_upload_records()
+    if manifest.get("status") != "ok":
+        return _error("SESSION_UPLOAD_REQUIRED")
+    texts, refs, documents = {}, {}, {}
+    for role, query in (("jd", args["jd_path"]), ("resume", paths[0])):
+        # Do not use the legacy resolver's arbitrary-path or fuzzy-match fallback.
+        matches = [
+            item
+            for item in manifest["uploads"]
+            if query in (item["upload_id"], item["filename"], item["path"])
+        ]
+        if len(matches) != 1:
+            return _error("SESSION_UPLOAD_REQUIRED", role=role)
+        record = matches[0]
+        path = Path(record["source_path"])
+        if path.resolve().parent != Path(manifest["uploads_root"]).resolve():
+            return _error("SESSION_UPLOAD_REQUIRED", role=role)
+        if path.suffix.lower() not in {".md", ".txt"}:
+            return _error("LINEAGE_TEXT_BASIS_REQUIRED", role=role)
+        raw = path.read_bytes()
+        content_hash = "sha256:" + hashlib.sha256(raw).hexdigest()
+        try:
+            texts[role] = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return _error("LINEAGE_TEXT_ENCODING_INVALID", role=role)
+        projection = document_projection(texts[role])
+        projection_hash = "sha256:" + hashlib.sha256(projection).hexdigest()
+        projection_path = path.parent / (
+            role + "-lineage-" + projection_hash[7:] + ".docx"
+        )
+        try:
+            with projection_path.open("xb") as handle:
+                handle.write(projection)
+        except FileExistsError:
+            if (
+                projection_path.is_symlink()
+                or projection_path.read_bytes() != projection
+            ):
+                return _error("SOURCE_PROJECTION_CHANGED", role=role)
+        refs[role] = projection_hash
+        documents[role] = {
+            "filename": path.name,
+            "upload_id": record["upload_id"],
+            "content_hash": content_hash,
+            "source_version": content_hash,
+            "projection_hash": projection_hash,
+            "projection_filename": projection_path.name,
+            "projection_version": "lossless_paragraph_docx.v1",
+        }
+    lineage = evaluate_lineage(texts, load_teaching_basis(), source_refs=refs)
+    payload = {
+        "status": "ok",
+        "mode": "lineage_v1",
+        "lineage": lineage,
+        "source_documents": documents,
+        "legacy_heuristic": False,
+    }
+    try:
+        # Each execution gets a new artifact path; historical results are not overwritten.
+        path = write_screening_artifact("lineage-" + uuid.uuid4().hex, payload)
+    except RuntimeError as exc:
+        return _error(str(exc).split(":", 1)[0], str(exc))
+    return json.dumps(dict(payload, artifact_path=str(path)), ensure_ascii=False)

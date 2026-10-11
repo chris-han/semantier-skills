@@ -80,7 +80,8 @@ RESOLVE_UPLOADED_RESUME_SCHEMA = {
 
 SCREEN_RESUMES_SCHEMA = {
     "description": (
-        "Extract and rank uploaded resumes, then persist a workspace-scoped screening artifact."
+        "Screen uploaded resumes. lineage_v1 uses a pinned reviewed teaching basis and core predicates; "
+        "legacy_heuristic ranks keywords without evidence-based competence decisions."
     ),
     "parameters": {
         "type": "object",
@@ -88,6 +89,8 @@ SCREEN_RESUMES_SCHEMA = {
             "job_profile": JOB_PROFILE_SCHEMA,
             "resume_paths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
             "run_label": {"type": "string", "default": "resume-screening"},
+            "mode": {"type": "string", "enum": ["legacy_heuristic", "lineage_v1"]},
+            "jd_path": {"type": "string", "description": "Active-session JD upload identity for lineage_v1."},
         },
         "required": ["job_profile", "resume_paths"],
     },
