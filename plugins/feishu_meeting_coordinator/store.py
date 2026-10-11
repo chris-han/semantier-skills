@@ -605,10 +605,14 @@ class MeetingCoordinatorStore:
             """)
             # Historical rows remain explicitly unbound and cannot issue receipts.
             current_columns = {row['name'] for row in conn.execute('PRAGMA table_info(meeting_time_negotiations)')}
-            for name in ('organization_id', 'workflow_binding_json', 'workflow_binding_hash'):
+            for name in ('organization_id', 'workflow_binding_json', 'workflow_binding_hash', 'actor_origin_json'):
                 if name not in current_columns:
                     conn.execute(f'ALTER TABLE meeting_time_negotiations ADD COLUMN {name} TEXT')
             conn.executescript("""
+                CREATE TRIGGER IF NOT EXISTS meeting_actor_origin_immutable
+                BEFORE UPDATE OF actor_origin_json ON meeting_time_negotiations
+                WHEN OLD.actor_origin_json IS NOT NEW.actor_origin_json
+                BEGIN SELECT RAISE(ABORT, 'ACTOR_ORIGIN_IMMUTABLE'); END;
                 CREATE TRIGGER IF NOT EXISTS meeting_workflow_binding_immutable
                 BEFORE UPDATE OF organization_id, workspace_id, workflow_binding_json, workflow_binding_hash
                 ON meeting_time_negotiations
@@ -2792,6 +2796,48 @@ class MeetingCoordinatorStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_api_continuation_result(self, negotiation_id, continuation_id):
+        for event in self.list_negotiation_events(negotiation_id):
+            if event['event_type']=='API_CONTINUATION_RESULT':
+                if hashlib.sha256(event['payload_json'].encode()).hexdigest()!=event['payload_hash']:raise ValueError('API_RESULT_HASH_MISMATCH')
+                payload=json.loads(event['payload_json'])
+                if payload.get('continuation_id')==continuation_id:
+                    return payload
+        return None
+
+    def commit_api_continuation_result(self, record, *, response, runtime_context):
+        """G1 version fencing and result history commit in the existing domain transaction."""
+        from contracts.workflow_execution import authorize_meeting_requester_mutation,hash_value,verify_meeting_binding
+        from agents.durable_event_arbitration import DurableEventInbox,WorkflowVersion
+        authorize_meeting_requester_mutation(self.get_negotiation(record.workflow_id),runtime_context.user_id,runtime_context)
+        payload=json.loads(record.payload_json)
+        if len(response.encode('utf-8'))>16384: raise ValueError('API_RESULT_TOO_LARGE')
+        def state(conn):
+            row=conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',(record.workflow_id,)).fetchone()
+            if row is None: raise KeyError(record.workflow_id)
+            case=dict(row)
+            authorize_meeting_requester_mutation(case,runtime_context.user_id,runtime_context)
+            verify_meeting_binding(json.loads(case['workflow_binding_json']),organization_id=case['organization_id'],workspace_id=case['workspace_id'])
+            if hash_value(json.loads(case['actor_origin_json'] or 'null'))!=payload['api_actor_origin_hash']:
+                raise ValueError('API_ORIGIN_HASH_MISMATCH')
+            return WorkflowVersion(self.negotiation_event_count(record.workflow_id,conn=conn),case['status'] in TERMINAL_NEGOTIATION_STATUSES)
+        def transition(conn,current):
+            if current.terminal: return current,None
+            result={'continuation_id':record.continuation_id,'origin_hash':payload['api_actor_origin_hash'],
+                'input_hash':record.payload_hash,'response':response,'response_hash':hash_value(response),
+                'workflow_id':record.workflow_id,'event_id':record.event_id,
+                'workflow_binding_hash':hash_value(json.loads(conn.execute('SELECT workflow_binding_json FROM meeting_time_negotiations WHERE negotiation_id=?',(record.workflow_id,)).fetchone()[0])),
+                'resulting_version':current.version+1}
+            self._record_negotiation_event(conn,negotiation_id=record.workflow_id,event_type='API_CONTINUATION_RESULT',
+                actor_type='system',actor_id='semantier_embedded_api',payload=result,
+                prior_state_version=current.version,next_state_version=current.version+1)
+            return WorkflowVersion(current.version+1,False),result
+        accepted=DurableEventInbox(self.path).accept(workflow_type='meeting_negotiation',workflow_id=record.workflow_id,
+            event_id='api-result:'+record.continuation_id,event_type='API_CONTINUATION_RESULT',dedupe_key='api-result:'+record.continuation_id,
+            expected_state_version=payload['expected_domain_version'],load_state=state,transition=transition)
+        # Never report a stale/terminal no-op as an advancement.
+        return accepted.value or self.get_api_continuation_result(record.workflow_id,record.continuation_id)
+
     def create_or_get_negotiation_case(
         self,
         *,
@@ -2801,6 +2847,7 @@ class MeetingCoordinatorStore:
         session_id: str | None = None,
         workflow_binding: dict[str, Any] | None = None,
         runtime_context=None,
+        actor_origin=None,
     ) -> dict[str, Any]:
         from contracts.workflow_execution import verify_meeting_binding, hash_value
         if runtime_context is not None:
@@ -2812,6 +2859,9 @@ class MeetingCoordinatorStore:
             if runtime_context is None:
                 raise ValueError('WORKFLOW_AUTHENTICATED_CONTEXT_REQUIRED')
             verify_meeting_binding(workflow_binding, organization_id=runtime_context.organization_id, workspace_id=runtime_context.workspace_id)
+        if actor_origin is not None:
+            from agents.meeting_api_origin import verify_prospective_origin
+            verify_prospective_origin(actor_origin,runtime_context,workflow_binding)
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -2865,12 +2915,12 @@ class MeetingCoordinatorStore:
                         last_agent_error, failure_reason, created_at, updated_at,
                         completed_at, kanban_task_id, expires_at_utc, finalize_status,
                         finalize_attempt_id, trigger_attendee_user_ids_json,
-                        organization_id, workflow_binding_json, workflow_binding_hash
+                        organization_id, workflow_binding_json, workflow_binding_hash, actor_origin_json
                     )
                     VALUES (
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_decliner_input',
                         0, 5, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL,
-                        ?, ?, NULL, NULL, ?, 'not_started', NULL, ?, ?, ?, ?
+                        ?, ?, NULL, NULL, ?, 'not_started', NULL, ?, ?, ?, ?, ?
                     )
                     """,
                     (
@@ -2898,6 +2948,7 @@ class MeetingCoordinatorStore:
                         runtime_context.organization_id if workflow_binding else None,
                         _json(workflow_binding) if workflow_binding else None,
                         hash_value(workflow_binding) if workflow_binding else None,
+                        _json(actor_origin) if actor_origin else None,
                     ),
                 )
                 self._record_negotiation_event(
@@ -2911,10 +2962,16 @@ class MeetingCoordinatorStore:
                         "monitor_id": monitor_id,
                         "event_revision_id": event_revision_id,
                         "trigger_attendee_user_id": trigger_attendee_user_id,
+                        "actor_origin": actor_origin,
                     },
                 )
             else:
                 negotiation_id = existing_row["negotiation_id"]
+                if actor_origin is not None:
+                    old_origin=json.loads(existing_row['actor_origin_json'] or 'null')
+                    # Capture time is provenance, not retry identity. Never backfill.
+                    if old_origin is None or {k:v for k,v in old_origin.items() if k!='captured_at'} != {k:v for k,v in actor_origin.items() if k!='captured_at'}:
+                        raise ValueError('ACTOR_ORIGIN_REBINDING_FORBIDDEN')
                 if workflow_binding is not None and (existing_row['workflow_binding_hash'] != hash_value(workflow_binding) or json.loads(existing_row['workflow_binding_json'] or 'null') != workflow_binding):
                     raise ValueError('WORKFLOW_INSTANCE_REBINDING_FORBIDDEN')
                 if runtime_context is not None and (existing_row['organization_id'] != runtime_context.organization_id or existing_row['workspace_id'] != runtime_context.workspace_id):
