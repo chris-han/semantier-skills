@@ -165,7 +165,7 @@ def _screen_lineage(args: dict[str, Any]) -> str:
         load_teaching_basis,
         document_projection,
     )
-    from .extraction import list_session_upload_records
+    from .extraction import list_session_upload_records, _session_env
     from .artifacts import write_screening_artifact
 
     paths = args.get("resume_paths")
@@ -217,6 +217,10 @@ def _screen_lineage(args: dict[str, Any]) -> str:
             "content_hash": content_hash,
             "source_version": content_hash,
             "projection_hash": projection_hash,
+            "source_identity_ref": "session-upload:"
+            + _session_env("HERMES_SESSION_ID")
+            + ":"
+            + projection_hash,
             "projection_filename": projection_path.name,
             "projection_version": "lossless_paragraph_docx.v1",
         }
