@@ -964,6 +964,9 @@ def _admit_clarification_continuation(
         binding = json.loads(str(negotiation.get("creator_delivery_binding_json") or "{}"))
     except json.JSONDecodeError:
         binding = {}
+    origin = json.loads(str(negotiation.get('actor_origin_json') or 'null'))
+    if origin is not None:
+        binding = origin
     session_key = str(binding.get("session_key") or "").strip()
     workspace_id = str(negotiation.get("workspace_id") or "").strip()
     if not session_key or not workspace_id:
@@ -996,6 +999,8 @@ def _admit_clarification_continuation(
             session_key=session_key,
             bounded_payload={
                 "kind": "AGENT_CONTINUE",
+                **({'api_actor_origin_hash': __import__('contracts.workflow_execution', fromlist=['hash_value']).hash_value(origin),
+                    'expected_domain_version': current.version + 1} if origin is not None else {}),
                 "reason": reason,
                 "negotiation_id": negotiation_id,
                 "message_event_id": message_event_id,
@@ -2080,6 +2085,8 @@ def negotiation_case_start(
     else:
         # Body-provided scope, pins and success/simulation claims are not read.
         binding = read_active_meeting_binding(ctx)
+    from agents.meeting_api_origin import prospective_meeting_origin
+    actor_origin = prospective_meeting_origin(ctx,binding)
     negotiation = store.create_or_get_negotiation_case(
         monitor_id=_text(payload.get('monitor_id')),
         event_revision_id=_text(payload.get('event_revision_id')),
@@ -2087,6 +2094,7 @@ def negotiation_case_start(
         session_id=_text(payload.get('session_id')) or None,
         workflow_binding=binding,
         runtime_context=ctx,
+        actor_origin=actor_origin,
     )
     if payload.get('ensure_kanban') is not False:
         ensure_negotiation_kanban_task(
