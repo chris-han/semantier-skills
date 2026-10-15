@@ -16,7 +16,11 @@ def _contains(text: str, keyword: str) -> bool:
 
 
 def _experience_years(text: str) -> float:
-    matches = re.findall(r"(\d+(?:\.\d+)?)\s*(?:years?|年)", text, flags=re.IGNORECASE)
+    # Match bounded durations, never a calendar year or its trailing digits.
+    matches = re.findall(
+        r"(?<![\d.])(\d{1,2}(?:\.\d+)?)\s*(?:years?\b|年(?!\s*\d+\s*月))",
+        text, flags=re.IGNORECASE,
+    )
     values = [float(item) for item in matches]
     return max(values) if values else 0.0
 

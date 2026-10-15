@@ -80,7 +80,7 @@ RESOLVE_UPLOADED_RESUME_SCHEMA = {
 
 SCREEN_RESUMES_SCHEMA = {
     "description": (
-        "Screen uploaded resumes. lineage_v1 uses a pinned reviewed teaching basis and core predicates; "
+        "Screen active-session .md/.txt/.pdf/.docx uploads. lineage_v1 uses a pinned reviewed teaching basis and core predicates; "
         "legacy_heuristic ranks keywords without evidence-based competence decisions."
     ),
     "parameters": {

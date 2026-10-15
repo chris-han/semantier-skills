@@ -165,7 +165,10 @@ def _screen_lineage(args: dict[str, Any]) -> str:
         load_teaching_basis,
         document_projection,
     )
-    from .extraction import list_session_upload_records, _session_env
+    from .extraction import (
+        list_session_upload_records, _session_env,
+        SUPPORTED_EXTENSIONS, _read_born_digital_document_basis,
+    )
     from .artifacts import write_screening_artifact
 
     paths = args.get("resume_paths")
@@ -188,14 +191,41 @@ def _screen_lineage(args: dict[str, Any]) -> str:
         path = Path(record["source_path"])
         if path.resolve().parent != Path(manifest["uploads_root"]).resolve():
             return _error("SESSION_UPLOAD_REQUIRED", role=role)
-        if path.suffix.lower() not in {".md", ".txt"}:
-            return _error("LINEAGE_TEXT_BASIS_REQUIRED", role=role)
-        raw = path.read_bytes()
-        content_hash = "sha256:" + hashlib.sha256(raw).hexdigest()
+        extension = path.suffix.lower()
+        if extension not in SUPPORTED_EXTENSIONS:
+            return _error("UNSUPPORTED_RESUME_FORMAT", role=role,
+                          supported_extensions=list(SUPPORTED_EXTENSIONS))
+        extraction_artifacts = {}
+        extraction_method = "native_text"
         try:
-            texts[role] = raw.decode("utf-8")
+            raw = path.read_bytes()
+            content_hash = "sha256:" + hashlib.sha256(raw).hexdigest()
+            if extension in {".pdf", ".docx"}:
+                texts[role], extraction_method, extraction_artifacts = (
+                    _read_born_digital_document_basis(path)
+                )
+                if extraction_artifacts.get("source_hash") != content_hash:
+                    return _error("SOURCE_EXTRACTION_CHANGED", role=role)
+                if not all(extraction_artifacts.get(key) for key in (
+                    "normalized_document_artifact_ref", "normalized_document_artifact_hash",
+                    "parser_method", "parser_version",
+                )):
+                    return _error("LINEAGE_EXTRACTION_PINS_REQUIRED", role=role)
+            else:
+                texts[role] = raw.decode("utf-8")
         except UnicodeDecodeError:
             return _error("LINEAGE_TEXT_ENCODING_INVALID", role=role)
+        except RuntimeError as exc:
+            code = str(exc).split(":", 1)[0]
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]*", code):
+                code = "LINEAGE_EXTRACTION_FAILED"
+            return _error(code, str(exc), role=role)
+        except (OSError, ValueError) as exc:
+            return _error("LINEAGE_EXTRACTION_FAILED", str(exc), role=role)
+        if not texts[role].strip():
+            return _error("LINEAGE_TEXT_BASIS_REQUIRED",
+                          "No extractable text; provide a text-bearing document. OCR is unavailable.",
+                          role=role)
         projection = document_projection(texts[role])
         projection_hash = "sha256:" + hashlib.sha256(projection).hexdigest()
         projection_path = path.parent / (
@@ -216,6 +246,10 @@ def _screen_lineage(args: dict[str, Any]) -> str:
             "upload_id": record["upload_id"],
             "content_hash": content_hash,
             "source_version": content_hash,
+            "text": texts[role],
+            "text_hash": "sha256:" + hashlib.sha256(texts[role].encode("utf-8")).hexdigest(),
+            "extraction_method": extraction_method,
+            "extraction_artifacts": extraction_artifacts,
             "projection_hash": projection_hash,
             "source_identity_ref": "session-upload:"
             + _session_env("HERMES_SESSION_ID")

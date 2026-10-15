@@ -268,7 +268,7 @@ def _governed_document_ref(path: Path) -> str:
     return f"uploads/{relative.as_posix()}"
 
 
-def _read_born_digital_document(path: Path) -> tuple[str, str]:
+def _read_born_digital_document_basis(path: Path) -> tuple[str, str, dict[str, Any]]:
     """Delegate binary document extraction to the governed host service boundary."""
     try:
         from plugins.document_extraction.service import extract_live
@@ -293,6 +293,11 @@ def _read_born_digital_document(path: Path) -> tuple[str, str]:
     )
     parser = result.get("parser") if isinstance(result.get("parser"), dict) else {}
     method = str(parser.get("method") or "document_extraction")
+    return text, method, dict(result.get("artifacts") or {})
+
+
+def _read_born_digital_document(path: Path) -> tuple[str, str]:
+    text, method, _artifacts = _read_born_digital_document_basis(path)
     return text, method
 
 def _session_env(name: str) -> str:
