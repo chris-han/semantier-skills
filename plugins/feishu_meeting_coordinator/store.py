@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from storage import hosted_postgres as hosted
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -132,10 +133,13 @@ def store_for_workspace(workspace_id: str) -> "MeetingCoordinatorStore":
 class MeetingCoordinatorStore:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path is not None else _db_path()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not hosted.enabled():
+            self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
+        if hosted.enabled():
+            return hosted.connect_authority('execution', self.path)
         # This database is shared with the core responsibility/timer owners.
         # Establish their journal policy before concurrent domain writes begin.
         conn = sqlite3.connect(str(self.path), timeout=30.0)
@@ -147,6 +151,10 @@ class MeetingCoordinatorStore:
         return conn
 
     def _ensure_schema(self) -> None:
+        if hosted.enabled():
+            with self._connect() as conn:
+                hosted.require_meeting_ready(conn)
+            return
         with self._connect() as conn:
             conn.executescript(
                 """
@@ -841,21 +849,25 @@ class MeetingCoordinatorStore:
         )
         with self._connect() as conn:
             existing = conn.execute(
-                "SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?",
+                hosted.sql_query("SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?", 'SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=%s'),
                 (monitor_id,),
             ).fetchone()
             if existing is not None:
                 return dict(existing)
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_monitors
                 SET status='replaced', updated_at=?
                 WHERE workspace_id=? AND event_id=? AND status IN ('active', 'pending_start', 'error', 'failed')
-                """,
+                """, """
+                UPDATE meeting_rsvp_monitors
+                SET status='replaced', updated_at=%s
+                WHERE workspace_id=%s AND event_id=%s AND status IN ('active', 'pending_start', 'error', 'failed')
+                """),
                 (now, payload["workspace_id"], payload["event_id"]),
             )
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_rsvp_monitors(
                     monitor_id, workspace_id, creator_user_id, platform, event_id,
                     event_revision_id, calendar_id, cron_job_id,
@@ -863,7 +875,15 @@ class MeetingCoordinatorStore:
                     payload_json
                 )
                 VALUES (?, ?, ?, 'feishu', ?, ?, ?, NULL, ?, 'pending_start', ?, ?, ?)
-                """,
+                """, """
+                INSERT INTO meeting_rsvp_monitors(
+                    monitor_id, workspace_id, creator_user_id, platform, event_id,
+                    event_revision_id, calendar_id, cron_job_id,
+                    creator_delivery_binding_json, status, created_at, updated_at,
+                    payload_json
+                )
+                VALUES (%s, %s, %s, 'feishu', %s, %s, %s, NULL, %s, 'pending_start', %s, %s, %s)
+                """),
                 (
                     monitor_id,
                     payload["workspace_id"],
@@ -882,13 +902,18 @@ class MeetingCoordinatorStore:
                 if not user_id:
                     continue
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     INSERT OR REPLACE INTO meeting_rsvp_attendees(
                         monitor_id, attendee_user_id, message_user_id, display_name,
                         response_status, delivery_status
                     )
                     VALUES (?, ?, ?, ?, 'unknown', 'ready')
-                    """,
+                    """, """
+                    INSERT INTO meeting_rsvp_attendees(
+                        monitor_id, attendee_user_id, message_user_id, display_name,
+                        response_status, delivery_status
+                    )
+                    VALUES (%s, %s, %s, %s, 'unknown', 'ready') ON CONFLICT (monitor_id,attendee_user_id) DO UPDATE SET message_user_id=excluded.message_user_id,display_name=excluded.display_name,response_status=excluded.response_status,last_response_at=excluded.last_response_at,last_followup_at=excluded.last_followup_at,followup_count=excluded.followup_count,delivery_status=excluded.delivery_status,escalated_at=excluded.escalated_at,negotiation_status=excluded.negotiation_status,negotiation_id=excluded.negotiation_id"""),
                     (
                         monitor_id,
                         user_id,
@@ -897,7 +922,7 @@ class MeetingCoordinatorStore:
                     ),
                 )
             row = conn.execute(
-                "SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?",
+                hosted.sql_query("SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?", 'SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=%s'),
                 (monitor_id,),
             ).fetchone()
         return dict(row) if row is not None else self.get_monitor(monitor_id)
@@ -905,7 +930,7 @@ class MeetingCoordinatorStore:
     def get_monitor(self, monitor_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?",
+                hosted.sql_query("SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?", 'SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=%s'),
                 (monitor_id,),
             ).fetchone()
         if row is None:
@@ -916,11 +941,15 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_monitors
                 SET cron_job_id=?, status='active', last_start_error=NULL, updated_at=?
                 WHERE monitor_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_monitors
+                SET cron_job_id=%s, status='active', last_start_error=NULL, updated_at=%s
+                WHERE monitor_id=%s
+                """),
                 (cron_job_id, now, monitor_id),
             )
         return self.get_monitor(monitor_id)
@@ -931,11 +960,15 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_monitors
                 SET status='pending_start', last_start_error=?, updated_at=?
                 WHERE monitor_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_monitors
+                SET status='pending_start', last_start_error=%s, updated_at=%s
+                WHERE monitor_id=%s
+                """),
                 (detail, now, monitor_id),
             )
         return self.get_monitor(monitor_id)
@@ -944,11 +977,15 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_monitors
                 SET status='complete', completed_at=?, updated_at=?
                 WHERE monitor_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_monitors
+                SET status='complete', completed_at=%s, updated_at=%s
+                WHERE monitor_id=%s
+                """),
                 (now, now, monitor_id),
             )
         return self.get_monitor(monitor_id)
@@ -959,14 +996,21 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_monitors
                 SET status='negotiating',
                     completed_at=COALESCE(completed_at, ?),
                     last_start_error=?,
                     updated_at=?
                 WHERE monitor_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_monitors
+                SET status='negotiating',
+                    completed_at=COALESCE(completed_at, %s),
+                    last_start_error=%s,
+                    updated_at=%s
+                WHERE monitor_id=%s
+                """),
                 (now, f"negotiation_started:{negotiation_id}", now, monitor_id),
             )
         return self.get_monitor(monitor_id)
@@ -977,14 +1021,21 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_monitors
                 SET status='cancelled',
                     completed_at=COALESCE(completed_at, ?),
                     last_start_error=?,
                     updated_at=?
                 WHERE monitor_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_monitors
+                SET status='cancelled',
+                    completed_at=COALESCE(completed_at, %s),
+                    last_start_error=%s,
+                    updated_at=%s
+                WHERE monitor_id=%s
+                """),
                 (now, detail, now, monitor_id),
             )
         return self.get_monitor(monitor_id)
@@ -993,14 +1044,21 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_monitors
                 SET status='failed',
                     completed_at=COALESCE(completed_at, ?),
                     last_start_error=?,
                     updated_at=?
                 WHERE monitor_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_monitors
+                SET status='failed',
+                    completed_at=COALESCE(completed_at, %s),
+                    last_start_error=%s,
+                    updated_at=%s
+                WHERE monitor_id=%s
+                """),
                 (now, detail, now, monitor_id),
             )
         return self.get_monitor(monitor_id)
@@ -1028,11 +1086,15 @@ class MeetingCoordinatorStore:
         counts = {status: 0 for status in sorted(ALL_RSVP_STATUSES)}
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_monitors
                 SET last_checked_at=?, updated_at=?
                 WHERE monitor_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_monitors
+                SET last_checked_at=%s, updated_at=%s
+                WHERE monitor_id=%s
+                """),
                 (now, now, monitor_id),
             )
             for item in live_attendees:
@@ -1045,14 +1107,21 @@ class MeetingCoordinatorStore:
                 counts[status] += 1
                 last_response_at = now if status in TERMINAL_RSVP_STATUSES else None
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_rsvp_attendees
                     SET response_status=?,
                         message_user_id=COALESCE(NULLIF(?, ''), message_user_id),
                         display_name=COALESCE(NULLIF(?, ''), display_name),
                         last_response_at=COALESCE(?, last_response_at)
                     WHERE monitor_id=? AND attendee_user_id=?
-                    """,
+                    """, """
+                    UPDATE meeting_rsvp_attendees
+                    SET response_status=%s,
+                        message_user_id=COALESCE(NULLIF(%s, ''), message_user_id),
+                        display_name=COALESCE(NULLIF(%s, ''), display_name),
+                        last_response_at=COALESCE(%s, last_response_at)
+                    WHERE monitor_id=%s AND attendee_user_id=%s
+                    """),
                     (
                         status,
                         str(item.get("message_user_id") or ""),
@@ -1067,10 +1136,13 @@ class MeetingCoordinatorStore:
     def get_attendee(self, monitor_id: str, attendee_user_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_attendees
                 WHERE monitor_id=? AND attendee_user_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_attendees
+                WHERE monitor_id=%s AND attendee_user_id=%s
+                """),
                 (monitor_id, attendee_user_id),
             ).fetchone()
         if row is None:
@@ -1080,11 +1152,15 @@ class MeetingCoordinatorStore:
     def list_attendees(self, monitor_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_attendees
                 WHERE monitor_id=?
                 ORDER BY attendee_user_id
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_attendees
+                WHERE monitor_id=%s
+                ORDER BY attendee_user_id
+                """),
                 (monitor_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1092,13 +1168,19 @@ class MeetingCoordinatorStore:
     def list_pending_followup_attendees(self, monitor_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_attendees
                 WHERE monitor_id=?
                   AND response_status IN ('needs_action', 'unknown')
                   AND delivery_status != 'escalated'
                 ORDER BY attendee_user_id
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_attendees
+                WHERE monitor_id=%s
+                  AND response_status IN ('needs_action', 'unknown')
+                  AND delivery_status != 'escalated'
+                ORDER BY attendee_user_id
+                """),
                 (monitor_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1121,14 +1203,21 @@ class MeetingCoordinatorStore:
         round_number = int(attendee["followup_count"] or 0) + 1
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_rsvp_followups(
                     followup_id, monitor_id, attendee_user_id, round_number,
                     status, message_channel, message_id, error_detail,
                     created_at, sent_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                """, """
+                INSERT INTO meeting_rsvp_followups(
+                    followup_id, monitor_id, attendee_user_id, round_number,
+                    status, message_channel, message_id, error_detail,
+                    created_at, sent_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """),
                 (
                     followup_id,
                     monitor_id,
@@ -1144,16 +1233,21 @@ class MeetingCoordinatorStore:
             )
             if status == "sent":
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_rsvp_attendees
                     SET followup_count=followup_count + 1,
                         last_followup_at=?
                     WHERE monitor_id=? AND attendee_user_id=?
-                    """,
+                    """, """
+                    UPDATE meeting_rsvp_attendees
+                    SET followup_count=followup_count + 1,
+                        last_followup_at=%s
+                    WHERE monitor_id=%s AND attendee_user_id=%s
+                    """),
                     (now, monitor_id, attendee_user_id),
                 )
             row = conn.execute(
-                "SELECT * FROM meeting_rsvp_followups WHERE followup_id=?",
+                hosted.sql_query("SELECT * FROM meeting_rsvp_followups WHERE followup_id=?", 'SELECT * FROM meeting_rsvp_followups WHERE followup_id=%s'),
                 (followup_id,),
             ).fetchone()
         return dict(row)
@@ -1174,21 +1268,31 @@ class MeetingCoordinatorStore:
         escalation_id = f"esc_{uuid.uuid4().hex}"
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_attendees
                 SET delivery_status='escalated', escalated_at=?
                 WHERE monitor_id=? AND attendee_user_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_attendees
+                SET delivery_status='escalated', escalated_at=%s
+                WHERE monitor_id=%s AND attendee_user_id=%s
+                """),
                 (now, monitor_id, attendee_user_id),
             )
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_rsvp_escalations(
                     escalation_id, monitor_id, attendee_user_id, creator_user_id,
                     reason, delivery_task_id, status, created_at, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                """, """
+                INSERT INTO meeting_rsvp_escalations(
+                    escalation_id, monitor_id, attendee_user_id, creator_user_id,
+                    reason, delivery_task_id, status, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """),
                 (
                     escalation_id,
                     monitor_id,
@@ -1202,7 +1306,7 @@ class MeetingCoordinatorStore:
                 ),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_rsvp_escalations WHERE escalation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_rsvp_escalations WHERE escalation_id=?", 'SELECT * FROM meeting_rsvp_escalations WHERE escalation_id=%s'),
                 (escalation_id,),
             ).fetchone()
         return dict(row)
@@ -1218,11 +1322,15 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             cursor = conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_escalations
                 SET status=?, updated_at=?
                 WHERE delivery_task_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_escalations
+                SET status=%s, updated_at=%s
+                WHERE delivery_task_id=%s
+                """),
                 (status, now, delivery_task_id),
             )
         return int(cursor.rowcount or 0)
@@ -1241,14 +1349,21 @@ class MeetingCoordinatorStore:
         task_id = f"dt_{uuid.uuid4().hex}"
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_rsvp_delivery_tasks(
                     delivery_task_id, monitor_id, workspace_id, task_type,
                     target_user_id, delivery_binding_json, payload_json,
                     status, attempt_count, next_attempt_at, created_at, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
-                """,
+                """, """
+                INSERT INTO meeting_rsvp_delivery_tasks(
+                    delivery_task_id, monitor_id, workspace_id, task_type,
+                    target_user_id, delivery_binding_json, payload_json,
+                    status, attempt_count, next_attempt_at, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', 0, %s, %s, %s)
+                """),
                 (
                     task_id,
                     monitor_id,
@@ -1263,10 +1378,13 @@ class MeetingCoordinatorStore:
                 ),
             )
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_delivery_tasks
                 WHERE delivery_task_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_delivery_tasks
+                WHERE delivery_task_id=%s
+                """),
                 (task_id,),
             ).fetchone()
         return dict(row) if row is not None else self.get_delivery_task(task_id)
@@ -1274,10 +1392,13 @@ class MeetingCoordinatorStore:
     def get_delivery_task(self, delivery_task_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_delivery_tasks
                 WHERE delivery_task_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_delivery_tasks
+                WHERE delivery_task_id=%s
+                """),
                 (delivery_task_id,),
             ).fetchone()
         if row is None:
@@ -1301,11 +1422,15 @@ class MeetingCoordinatorStore:
         )
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_delivery_tasks
                 SET status=?, result_detail=?, next_attempt_at=?, updated_at=?
                 WHERE delivery_task_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_delivery_tasks
+                SET status=%s, result_detail=%s, next_attempt_at=%s, updated_at=%s
+                WHERE delivery_task_id=%s
+                """),
                 (
                     "failed_retryable" if retryable else "failed_permanent",
                     detail,
@@ -1322,7 +1447,7 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_delivery_tasks
                 SET status='sent',
                     attempt_count=attempt_count + 1,
@@ -1330,7 +1455,15 @@ class MeetingCoordinatorStore:
                     next_attempt_at=NULL,
                     updated_at=?
                 WHERE delivery_task_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_delivery_tasks
+                SET status='sent',
+                    attempt_count=attempt_count + 1,
+                    result_detail=%s,
+                    next_attempt_at=NULL,
+                    updated_at=%s
+                WHERE delivery_task_id=%s
+                """),
                 (detail, now, delivery_task_id),
             )
         return self.get_delivery_task(delivery_task_id)
@@ -1352,7 +1485,7 @@ class MeetingCoordinatorStore:
         )
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_delivery_tasks
                 SET status=?,
                     attempt_count=attempt_count + 1,
@@ -1360,7 +1493,15 @@ class MeetingCoordinatorStore:
                     next_attempt_at=?,
                     updated_at=?
                 WHERE delivery_task_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_delivery_tasks
+                SET status=%s,
+                    attempt_count=attempt_count + 1,
+                    result_detail=%s,
+                    next_attempt_at=%s,
+                    updated_at=%s
+                WHERE delivery_task_id=%s
+                """),
                 (
                     "failed_retryable" if retryable else "failed_permanent",
                     detail,
@@ -1380,11 +1521,15 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_delivery_tasks
                 SET status='pending', next_attempt_at=?, result_detail=?, updated_at=?
                 WHERE delivery_task_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_delivery_tasks
+                SET status='pending', next_attempt_at=%s, result_detail=%s, updated_at=%s
+                WHERE delivery_task_id=%s
+                """),
                 (now, reason, now, delivery_task_id),
             )
         return self.get_delivery_task(delivery_task_id)
@@ -1395,14 +1540,21 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_delivery_tasks
                 WHERE workspace_id=?
                   AND status IN ('pending', 'failed_retryable')
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                 ORDER BY created_at
                 LIMIT ?
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_delivery_tasks
+                WHERE workspace_id=%s
+                  AND status IN ('pending', 'failed_retryable')
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= %s)
+                ORDER BY created_at
+                LIMIT %s
+                """),
                 (workspace_id, now, int(limit)),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1415,13 +1567,19 @@ class MeetingCoordinatorStore:
     ) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_delivery_tasks
                 WHERE workspace_id=?
                   AND status IN ('pending', 'failed_retryable')
                 ORDER BY created_at
                 LIMIT ?
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_delivery_tasks
+                WHERE workspace_id=%s
+                  AND status IN ('pending', 'failed_retryable')
+                ORDER BY created_at
+                LIMIT %s
+                """),
                 (workspace_id, int(limit)),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1435,7 +1593,7 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_rsvp_workspace_state(
                     workspace_id,
                     delivery_retry_scheduler_status,
@@ -1447,7 +1605,19 @@ class MeetingCoordinatorStore:
                     delivery_retry_scheduler_status='unavailable',
                     delivery_retry_scheduler_detail=excluded.delivery_retry_scheduler_detail,
                     updated_at=excluded.updated_at
-                """,
+                """, """
+                INSERT INTO meeting_rsvp_workspace_state(
+                    workspace_id,
+                    delivery_retry_scheduler_status,
+                    delivery_retry_scheduler_detail,
+                    updated_at
+                )
+                VALUES (%s, 'unavailable', %s, %s)
+                ON CONFLICT(workspace_id) DO UPDATE SET
+                    delivery_retry_scheduler_status='unavailable',
+                    delivery_retry_scheduler_detail=excluded.delivery_retry_scheduler_detail,
+                    updated_at=excluded.updated_at
+                """),
                 (workspace_id, detail, now),
             )
         return self.get_workspace_state(workspace_id)
@@ -1455,10 +1625,13 @@ class MeetingCoordinatorStore:
     def get_workspace_state(self, workspace_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_workspace_state
                 WHERE workspace_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_workspace_state
+                WHERE workspace_id=%s
+                """),
                 (workspace_id,),
             ).fetchone()
         if row is None:
@@ -1490,7 +1663,7 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_rsvp_workspace_state(
                     workspace_id,
                     delivery_retry_scheduler_status,
@@ -1502,7 +1675,19 @@ class MeetingCoordinatorStore:
                 ON CONFLICT(workspace_id) DO UPDATE SET
                     max_followups=excluded.max_followups,
                     updated_at=excluded.updated_at
-                """,
+                """, """
+                INSERT INTO meeting_rsvp_workspace_state(
+                    workspace_id,
+                    delivery_retry_scheduler_status,
+                    delivery_retry_scheduler_detail,
+                    max_followups,
+                    updated_at
+                )
+                VALUES (%s, 'ok', NULL, %s, %s)
+                ON CONFLICT(workspace_id) DO UPDATE SET
+                    max_followups=excluded.max_followups,
+                    updated_at=excluded.updated_at
+                """),
                 (workspace_id, max_followups, now),
             )
         return self.get_workspace_state(workspace_id)
@@ -1525,10 +1710,10 @@ class MeetingCoordinatorStore:
     ) -> dict[str, Any]:
         now = utc_now_iso()
         event_sequence = conn.execute(
-            'SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM meeting_time_negotiation_events WHERE negotiation_id=?',
+            hosted.sql_query('SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM meeting_time_negotiation_events WHERE negotiation_id=?', 'SELECT COALESCE(MAX(event_sequence), 0) + 1 FROM meeting_time_negotiation_events WHERE negotiation_id=%s'),
             (negotiation_id,),
         ).fetchone()[0]
-        case = conn.execute('SELECT organization_id,workspace_id,workflow_binding_json,workflow_binding_hash FROM meeting_time_negotiations WHERE negotiation_id=?', (negotiation_id,)).fetchone()
+        case = conn.execute(hosted.sql_query('SELECT organization_id,workspace_id,workflow_binding_json,workflow_binding_hash FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT organization_id,workspace_id,workflow_binding_json,workflow_binding_hash FROM meeting_time_negotiations WHERE negotiation_id=%s'), (negotiation_id,)).fetchone()
         if case and case['workflow_binding_json']:
             from contracts.workflow_execution import hash_value, verify_meeting_binding
             binding = json.loads(case['workflow_binding_json'])
@@ -1624,14 +1809,21 @@ class MeetingCoordinatorStore:
             length=32,
         )
         conn.execute(
-            """
+            hosted.sql_query("""
             INSERT INTO meeting_time_negotiation_events(
                 event_id, negotiation_id, event_type, actor_type, actor_id,
                 prior_state, next_state, prior_state_version, next_state_version,
                 kanban_task_id, kanban_run_id, payload_hash, payload_json, created_at, event_sequence
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            """, """
+            INSERT INTO meeting_time_negotiation_events(
+                event_id, negotiation_id, event_type, actor_type, actor_id,
+                prior_state, next_state, prior_state_version, next_state_version,
+                kanban_task_id, kanban_run_id, payload_hash, payload_json, created_at, event_sequence
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """),
             (
                 event_id,
                 negotiation_id,
@@ -1651,7 +1843,7 @@ class MeetingCoordinatorStore:
             ),
         )
         row = conn.execute(
-            "SELECT * FROM meeting_time_negotiation_events WHERE event_id=?",
+            hosted.sql_query("SELECT * FROM meeting_time_negotiation_events WHERE event_id=?", 'SELECT * FROM meeting_time_negotiation_events WHERE event_id=%s'),
             (event_id,),
         ).fetchone()
         return dict(row)
@@ -1674,9 +1866,9 @@ class MeetingCoordinatorStore:
         if event_type == 'SEMANTIC_BASIS_CONSUMED':
             raise ValueError('CONTINUATION_PRODUCER_READ_REQUIRED')
         with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            hosted.begin_write(conn)
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if row is None:
@@ -1701,16 +1893,16 @@ class MeetingCoordinatorStore:
         from .decision_planning import MeetingDecisionPlanningBasis
         with self._connect() as conn:
             conn.execute('BEGIN')
-            row = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', (negotiation_id,)).fetchone()
+            row = conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'), (negotiation_id,)).fetchone()
             if row is None:
                 raise KeyError(negotiation_id)
             case = dict(row)
-            participants = [dict(r) for r in conn.execute('SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? ORDER BY attendee_user_id', (negotiation_id,))]
-            slots = [dict(r) for r in conn.execute("SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=? AND status!='superseded' ORDER BY slot_id", (negotiation_id,))]
-            votes = [dict(r) for r in conn.execute('SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=? ORDER BY created_at, vote_id', (negotiation_id,))]
-            rsvps = {r['attendee_user_id']: r['response_status'] for r in conn.execute('SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=?', (case['monitor_id'],))}
-            events = [dict(r) for r in conn.execute('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', (negotiation_id,))]
-            settings = conn.execute('SELECT max_followups FROM meeting_rsvp_workspace_state WHERE workspace_id=?', (case['workspace_id'],)).fetchone()
+            participants = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? ORDER BY attendee_user_id', 'SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=%s ORDER BY attendee_user_id'), (negotiation_id,))]
+            slots = [dict(r) for r in conn.execute(hosted.sql_query("SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=? AND status!='superseded' ORDER BY slot_id", "SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=%s AND status!='superseded' ORDER BY slot_id"), (negotiation_id,))]
+            votes = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=? ORDER BY created_at, vote_id', 'SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=%s ORDER BY created_at, vote_id'), (negotiation_id,))]
+            rsvps = {r['attendee_user_id']: r['response_status'] for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=?', 'SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=%s'), (case['monitor_id'],))}
+            events = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', 'SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=%s ORDER BY event_sequence'), (negotiation_id,))]
+            settings = conn.execute(hosted.sql_query('SELECT max_followups FROM meeting_rsvp_workspace_state WHERE workspace_id=?', 'SELECT max_followups FROM meeting_rsvp_workspace_state WHERE workspace_id=%s'), (case['workspace_id'],)).fetchone()
         states = {}
         for p in participants:
             states['original', p['attendee_user_id']] = {'accepted': 'AVAILABLE', 'declined': 'UNAVAILABLE'}.get(rsvps.get(p['attendee_user_id']), 'UNKNOWN')
@@ -1737,8 +1929,8 @@ class MeetingCoordinatorStore:
         payload = frontier.to_dict()
         payload['decisionProjection'] = project_decision_frontier(frontier)
         with self._connect() as conn:
-            conn.execute('BEGIN IMMEDIATE')
-            case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',
+            hosted.begin_write(conn)
+            case = conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                                 (frontier.negotiation_id,)).fetchone()
             if case is None:
                 raise KeyError(frontier.negotiation_id)
@@ -1752,11 +1944,11 @@ class MeetingCoordinatorStore:
     def latest_decision_frontier(self, negotiation_id: str) -> dict[str, Any] | None:
         """Current revision read model; historical replay reads pinned events directly."""
         with self._connect() as conn:
-            case = conn.execute('SELECT event_revision_id FROM meeting_time_negotiations WHERE negotiation_id=?',
+            case = conn.execute(hosted.sql_query('SELECT event_revision_id FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT event_revision_id FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                                 (negotiation_id,)).fetchone()
             if case is None:
                 raise KeyError(negotiation_id)
-            rows = conn.execute("SELECT payload_json FROM meeting_time_negotiation_events WHERE negotiation_id=? AND event_type='DECISION_FRONTIER_COMPUTED' ORDER BY event_sequence DESC",
+            rows = conn.execute(hosted.sql_query("SELECT payload_json FROM meeting_time_negotiation_events WHERE negotiation_id=? AND event_type='DECISION_FRONTIER_COMPUTED' ORDER BY event_sequence DESC", "SELECT payload_json FROM meeting_time_negotiation_events WHERE negotiation_id=%s AND event_type='DECISION_FRONTIER_COMPUTED' ORDER BY event_sequence DESC"),
                                 (negotiation_id,)).fetchall()
         for row in rows:
             payload = json.loads(row['payload_json'])
@@ -1793,7 +1985,7 @@ class MeetingCoordinatorStore:
     def get_negotiation(self, negotiation_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
         if row is None:
@@ -1861,15 +2053,19 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiations
                 SET kanban_task_id=COALESCE(kanban_task_id, ?), updated_at=?
                 WHERE negotiation_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiations
+                SET kanban_task_id=COALESCE(kanban_task_id, %s), updated_at=%s
+                WHERE negotiation_id=%s
+                """),
                 (kanban_task_id, now, negotiation_id),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if row is None:
@@ -1917,14 +2113,21 @@ class MeetingCoordinatorStore:
         }
         try:
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_time_negotiation_messages(
                     message_event_id, negotiation_id, direction,
                     participant_user_id, message_channel, message_id,
                     message_type, payload_json, agent_trace_ref, created_at
                 ) VALUES (?, ?, 'outbound', ?, 'feishu', NULL,
                           'followup_reminder', ?, NULL, ?)
-                """,
+                """, """
+                INSERT INTO meeting_time_negotiation_messages(
+                    message_event_id, negotiation_id, direction,
+                    participant_user_id, message_channel, message_id,
+                    message_type, payload_json, agent_trace_ref, created_at
+                ) VALUES (%s, %s, 'outbound', %s, 'feishu', NULL,
+                          'followup_reminder', %s, NULL, %s)
+                """),
                 (
                     message_event_id,
                     negotiation_id,
@@ -1934,13 +2137,16 @@ class MeetingCoordinatorStore:
                 ),
             )
             reserved = True
-        except sqlite3.IntegrityError:
+        except hosted.integrity_errors():
             reserved = False
         row = conn.execute(
-            """
+            hosted.sql_query("""
             SELECT * FROM meeting_time_negotiation_messages
             WHERE message_event_id=?
-            """,
+            """, """
+            SELECT * FROM meeting_time_negotiation_messages
+            WHERE message_event_id=%s
+            """),
             (message_event_id,),
         ).fetchone()
         if row is None:
@@ -1966,10 +2172,13 @@ class MeetingCoordinatorStore:
         )
         with self._connect() as conn:
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_messages
                 WHERE message_event_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_messages
+                WHERE message_event_id=%s
+                """),
                 (message_event_id,),
             ).fetchone()
         return dict(row) if row is not None else None
@@ -1985,11 +2194,15 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT message_id FROM meeting_time_negotiation_messages
                 WHERE message_event_id=? AND negotiation_id=?
                   AND participant_user_id=? AND direction='outbound'
-                """,
+                """, """
+                SELECT message_id FROM meeting_time_negotiation_messages
+                WHERE message_event_id=%s AND negotiation_id=%s
+                  AND participant_user_id=%s AND direction='outbound'
+                """),
                 (message_event_id, negotiation_id, attendee_user_id),
             ).fetchone()
             if row is None:
@@ -2001,30 +2214,42 @@ class MeetingCoordinatorStore:
             applied = False
             if not existing:
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_time_negotiation_messages
                     SET message_id=?
                     WHERE message_event_id=? AND message_id IS NULL
-                    """,
+                    """, """
+                    UPDATE meeting_time_negotiation_messages
+                    SET message_id=%s
+                    WHERE message_event_id=%s AND message_id IS NULL
+                    """),
                     (normalized, message_event_id),
                 )
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_time_negotiation_participants
                     SET followup_count=followup_count + 1,
                         last_followup_at=?, updated_at=?
                     WHERE negotiation_id=? AND attendee_user_id=?
-                    """,
+                    """, """
+                    UPDATE meeting_time_negotiation_participants
+                    SET followup_count=followup_count + 1,
+                        last_followup_at=%s, updated_at=%s
+                    WHERE negotiation_id=%s AND attendee_user_id=%s
+                    """),
                     (now, now, negotiation_id, attendee_user_id),
                 )
                 applied = True
             elif existing != normalized:
                 raise ValueError("provider_message_id conflicts with completed followup")
             participant = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_participants
                 WHERE negotiation_id=? AND attendee_user_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_participants
+                WHERE negotiation_id=%s AND attendee_user_id=%s
+                """),
                 (negotiation_id, attendee_user_id),
             ).fetchone()
             if participant is None:
@@ -2037,7 +2262,7 @@ class MeetingCoordinatorStore:
         if conn is not None:
             return int(
                 conn.execute(
-                    "SELECT COUNT(*) FROM meeting_time_negotiation_events WHERE negotiation_id=?",
+                    hosted.sql_query("SELECT COUNT(*) FROM meeting_time_negotiation_events WHERE negotiation_id=?", 'SELECT COUNT(*) FROM meeting_time_negotiation_events WHERE negotiation_id=%s'),
                     (negotiation_id,),
                 ).fetchone()[0]
             )
@@ -2057,33 +2282,43 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? AND attendee_user_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? AND attendee_user_id=?", 'SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=%s AND attendee_user_id=%s'),
                 (negotiation_id, attendee_user_id),
             ).fetchone()
             if row is None:
                 raise KeyError(f"{negotiation_id}:{attendee_user_id}")
             if status == "sent":
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_time_negotiation_participants
                     SET followup_count=followup_count + 1,
                         last_followup_at=?,
                         updated_at=?
                     WHERE negotiation_id=? AND attendee_user_id=?
-                    """,
+                    """, """
+                    UPDATE meeting_time_negotiation_participants
+                    SET followup_count=followup_count + 1,
+                        last_followup_at=%s,
+                        updated_at=%s
+                    WHERE negotiation_id=%s AND attendee_user_id=%s
+                    """),
                     (now, now, negotiation_id, attendee_user_id),
                 )
             else:
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_time_negotiation_participants
                     SET updated_at=?
                     WHERE negotiation_id=? AND attendee_user_id=?
-                    """,
+                    """, """
+                    UPDATE meeting_time_negotiation_participants
+                    SET updated_at=%s
+                    WHERE negotiation_id=%s AND attendee_user_id=%s
+                    """),
                     (now, negotiation_id, attendee_user_id),
                 )
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? AND attendee_user_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? AND attendee_user_id=?", 'SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=%s AND attendee_user_id=%s'),
                 (negotiation_id, attendee_user_id),
             ).fetchone()
         return dict(row)
@@ -2159,62 +2394,62 @@ class MeetingCoordinatorStore:
         assignments: list[str] = []
         values: list[Any] = []
         if followup_cron_job_id is not _UNSET:
-            assignments.append("followup_cron_job_id=?")
+            assignments.append(hosted.sql_query("followup_cron_job_id=?", 'followup_cron_job_id=%s'))
             values.append(followup_cron_job_id)
         if followup_cron_status is not _UNSET:
-            assignments.append("followup_cron_status=?")
+            assignments.append(hosted.sql_query("followup_cron_status=?", 'followup_cron_status=%s'))
             values.append(followup_cron_status)
         if followup_cron_last_tick_at is not _UNSET:
-            assignments.append("followup_cron_last_tick_at=?")
+            assignments.append(hosted.sql_query("followup_cron_last_tick_at=?", 'followup_cron_last_tick_at=%s'))
             values.append(
                 followup_cron_last_tick_at
                 if followup_cron_last_tick_at is not None
                 else None
             )
         if followup_cron_failure_count is not _UNSET:
-            assignments.append("followup_cron_failure_count=?")
+            assignments.append(hosted.sql_query("followup_cron_failure_count=?", 'followup_cron_failure_count=%s'))
             values.append(followup_cron_failure_count)
         if next_followup_at is not _UNSET:
-            assignments.append("next_followup_at=?")
+            assignments.append(hosted.sql_query("next_followup_at=?", 'next_followup_at=%s'))
             values.append(
                 next_followup_at
                 if next_followup_at is not None
                 else None
             )
         if terminal_authority is not _UNSET:
-            assignments.append("terminal_authority=?")
+            assignments.append(hosted.sql_query("terminal_authority=?", 'terminal_authority=%s'))
             values.append(terminal_authority)
         if terminal_at is not _UNSET:
-            assignments.append("terminal_at=?")
+            assignments.append(hosted.sql_query("terminal_at=?", 'terminal_at=%s'))
             values.append(terminal_at)
         if terminal_reason is not _UNSET:
-            assignments.append("terminal_reason=?")
+            assignments.append(hosted.sql_query("terminal_reason=?", 'terminal_reason=%s'))
             values.append(terminal_reason)
         if terminal_event_revision_id is not _UNSET:
-            assignments.append("terminal_event_revision_id=?")
+            assignments.append(hosted.sql_query("terminal_event_revision_id=?", 'terminal_event_revision_id=%s'))
             values.append(terminal_event_revision_id)
         if not assignments:
             raise ValueError("no followup cron fields provided")
-        assignments.append("updated_at=?")
+        assignments.append(hosted.sql_query("updated_at=?", 'updated_at=%s'))
         values.append(utc_now_iso())
         values.append(negotiation_id)
 
-        where_clause = "negotiation_id=?"
+        where_clause = hosted.sql_query("negotiation_id=?", 'negotiation_id=%s')
         if expected_followup_cron_job_id is not _UNSET:
             expected_followup_cron_job_id = str(expected_followup_cron_job_id or "").strip()
             if expected_followup_cron_job_id:
                 where_clause = (
-                    "negotiation_id=? AND followup_cron_job_id=?"
+                    hosted.sql_query("negotiation_id=? AND followup_cron_job_id=?", 'negotiation_id=%s AND followup_cron_job_id=%s')
                 )
                 values.append(expected_followup_cron_job_id)
             else:
                 where_clause = (
-                    "negotiation_id=? AND (followup_cron_job_id IS NULL OR followup_cron_job_id='')"
+                    hosted.sql_query("negotiation_id=? AND (followup_cron_job_id IS NULL OR followup_cron_job_id='')", "negotiation_id=%s AND (followup_cron_job_id IS NULL OR followup_cron_job_id='')")
                 )
 
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if row is None:
@@ -2231,7 +2466,7 @@ class MeetingCoordinatorStore:
             if expected_followup_cron_job_id is not _UNSET and int(cursor.rowcount or 0) != 1:
                 raise RuntimeError("followup cron ownership mismatch")
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             self._record_negotiation_event(
@@ -2253,7 +2488,7 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if row is None:
@@ -2263,15 +2498,19 @@ class MeetingCoordinatorStore:
             if terminal:
                 status = "disabled"
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiations
                 SET followup_cron_failure_count=?, followup_cron_status=?, updated_at=?
                 WHERE negotiation_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiations
+                SET followup_cron_failure_count=%s, followup_cron_status=%s, updated_at=%s
+                WHERE negotiation_id=%s
+                """),
                 (failure_count, status, now, negotiation_id),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
         return dict(row)
@@ -2313,16 +2552,19 @@ class MeetingCoordinatorStore:
         for _ in range(2):
             with self._connect() as conn:
                 row = conn.execute(
-                    """
+                    hosted.sql_query("""
                     SELECT * FROM meeting_time_negotiation_followup_crons
                     WHERE workspace_id=? AND negotiation_id=? AND cron_name=?
-                    """,
+                    """, """
+                    SELECT * FROM meeting_time_negotiation_followup_crons
+                    WHERE workspace_id=%s AND negotiation_id=%s AND cron_name=%s
+                    """),
                     (workspace_id, negotiation_id, cron_name),
                 ).fetchone()
                 if row is None:
                     try:
                         conn.execute(
-                            """
+                            hosted.sql_query("""
                             INSERT INTO meeting_time_negotiation_followup_crons(
                                 owner_profile,
                                 owner_idempotency_key,
@@ -2335,7 +2577,20 @@ class MeetingCoordinatorStore:
                                 lease_expires_at,
                                 updated_at
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
+                            """, """
+                            INSERT INTO meeting_time_negotiation_followup_crons(
+                                owner_profile,
+                                owner_idempotency_key,
+                                workspace_id,
+                                negotiation_id,
+                                cron_name,
+                                cron_job_id,
+                                status,
+                                acquired_at,
+                                lease_expires_at,
+                                updated_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """),
                             (
                                 owner_profile,
                                 owner_idempotency_key,
@@ -2350,7 +2605,7 @@ class MeetingCoordinatorStore:
                             ),
                         )
                         return True
-                    except sqlite3.IntegrityError:
+                    except hosted.integrity_errors():
                         continue
 
                 existing_owner = str(row["owner_profile"] or "")
@@ -2364,7 +2619,7 @@ class MeetingCoordinatorStore:
                     raise RuntimeError("followup cron ownership conflict")
 
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_time_negotiation_followup_crons
                     SET owner_profile=?,
                         owner_idempotency_key=?,
@@ -2374,7 +2629,17 @@ class MeetingCoordinatorStore:
                         lease_expires_at=?,
                         updated_at=?
                     WHERE workspace_id=? AND negotiation_id=? AND cron_name=?
-                    """,
+                    """, """
+                    UPDATE meeting_time_negotiation_followup_crons
+                    SET owner_profile=%s,
+                        owner_idempotency_key=%s,
+                        status='active',
+                        cron_job_id=COALESCE(%s, cron_job_id),
+                        acquired_at=%s,
+                        lease_expires_at=%s,
+                        updated_at=%s
+                    WHERE workspace_id=%s AND negotiation_id=%s AND cron_name=%s
+                    """),
                     (
                         owner_profile,
                         owner_idempotency_key,
@@ -2393,7 +2658,7 @@ class MeetingCoordinatorStore:
     def has_followup_cron_ownership(self, negotiation_id: str) -> bool:
         with self._connect() as conn:
             return conn.execute(
-                'SELECT 1 FROM meeting_time_negotiation_followup_crons WHERE negotiation_id=? LIMIT 1',
+                hosted.sql_query('SELECT 1 FROM meeting_time_negotiation_followup_crons WHERE negotiation_id=? LIMIT 1', 'SELECT 1 FROM meeting_time_negotiation_followup_crons WHERE negotiation_id=%s LIMIT 1'),
                 (negotiation_id,),
             ).fetchone() is not None
 
@@ -2417,16 +2682,19 @@ class MeetingCoordinatorStore:
         if not workspace_id:
             raise ValueError("workspace_id is required")
 
-        query = """
+        query = hosted.sql_query("""
             DELETE FROM meeting_time_negotiation_followup_crons
             WHERE workspace_id=? AND negotiation_id=? AND cron_name=?
-        """
+        """, """
+            DELETE FROM meeting_time_negotiation_followup_crons
+            WHERE workspace_id=%s AND negotiation_id=%s AND cron_name=%s
+        """)
         params: list[str] = [workspace_id, negotiation_id, cron_name]
         if owner_profile is not None:
-            query += " AND owner_profile=?"
+            query += hosted.sql_query(" AND owner_profile=?", ' AND owner_profile=%s')
             params.append(owner_profile.strip())
         if owner_idempotency_key is not None:
-            query += " AND owner_idempotency_key=?"
+            query += hosted.sql_query(" AND owner_idempotency_key=?", ' AND owner_idempotency_key=%s')
             params.append(owner_idempotency_key.strip())
 
         with self._connect() as conn:
@@ -2453,22 +2721,26 @@ class MeetingCoordinatorStore:
         with self._connect() as conn:
             # Ensure negotiation exists before writing a lock row.
             existing = conn.execute(
-                "SELECT 1 FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT 1 FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT 1 FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if existing is None:
                 raise KeyError(negotiation_id)
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiation_case_locks WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiation_case_locks WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiation_case_locks WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if row is None:
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     INSERT INTO meeting_time_negotiation_case_locks(
                         negotiation_id, owner, lease_expires_at, acquired_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?)
-                    """,
+                    """, """
+                    INSERT INTO meeting_time_negotiation_case_locks(
+                        negotiation_id, owner, lease_expires_at, acquired_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    """),
                     (negotiation_id, owner, expires_at, now_iso, now_iso),
                 )
                 return True
@@ -2476,14 +2748,21 @@ class MeetingCoordinatorStore:
             prior_expiry = _parse_utc_iso(str(row["lease_expires_at"] or ""))
             if prior_expiry is None or prior_expiry <= now or prior_owner == owner:
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_time_negotiation_case_locks
                     SET owner=?,
                         lease_expires_at=?,
                         acquired_at=?,
                         updated_at=?
                     WHERE negotiation_id=?
-                    """,
+                    """, """
+                    UPDATE meeting_time_negotiation_case_locks
+                    SET owner=%s,
+                        lease_expires_at=%s,
+                        acquired_at=%s,
+                        updated_at=%s
+                    WHERE negotiation_id=%s
+                    """),
                     (owner, expires_at, now_iso, now_iso, negotiation_id),
                 )
                 return True
@@ -2495,8 +2774,8 @@ class MeetingCoordinatorStore:
         owner = owner.strip()
         with self._connect() as conn:
             row = conn.execute(
-                "DELETE FROM meeting_time_negotiation_case_locks "
-                "WHERE negotiation_id=? AND owner=?",
+                hosted.sql_query("DELETE FROM meeting_time_negotiation_case_locks "
+                "WHERE negotiation_id=? AND owner=?", 'DELETE FROM meeting_time_negotiation_case_locks WHERE negotiation_id=%s AND owner=%s'),
                 (negotiation_id, owner),
             )
         return bool(row.rowcount and row.rowcount > 0)
@@ -2504,11 +2783,15 @@ class MeetingCoordinatorStore:
     def list_negotiations_for_monitor(self, monitor_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiations
                 WHERE monitor_id=?
                 ORDER BY created_at, negotiation_id
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiations
+                WHERE monitor_id=%s
+                ORDER BY created_at, negotiation_id
+                """),
                 (monitor_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -2524,17 +2807,21 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(negotiation_id)
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiations
                 SET kanban_task_id=NULL, updated_at=?
                 WHERE negotiation_id=? AND kanban_task_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiations
+                SET kanban_task_id=NULL, updated_at=%s
+                WHERE negotiation_id=%s AND kanban_task_id=%s
+                """),
                 (now, negotiation_id, kanban_task_id),
             )
             self._record_negotiation_event(
@@ -2547,7 +2834,7 @@ class MeetingCoordinatorStore:
                 payload={"kanban_task_id": kanban_task_id, "reason": reason},
             )
             refreshed = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
         return dict(refreshed)
@@ -2560,15 +2847,19 @@ class MeetingCoordinatorStore:
     ) -> dict[str, Any]:
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiation_messages
                 SET kanban_comment_id=COALESCE(kanban_comment_id, ?)
                 WHERE message_event_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiation_messages
+                SET kanban_comment_id=COALESCE(kanban_comment_id, %s)
+                WHERE message_event_id=%s
+                """),
                 (kanban_comment_id, message_event_id),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?", 'SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=%s'),
                 (message_event_id,),
             ).fetchone()
             if row is None:
@@ -2576,7 +2867,7 @@ class MeetingCoordinatorStore:
             if row["kanban_comment_id"] != kanban_comment_id:
                 raise ValueError("message already linked to a different Kanban comment")
             negotiation = conn.execute(
-                "SELECT kanban_task_id FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT kanban_task_id FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT kanban_task_id FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (row["negotiation_id"],),
             ).fetchone()
             self._record_negotiation_event(
@@ -2598,11 +2889,15 @@ class MeetingCoordinatorStore:
     ) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_participants
                 WHERE negotiation_id=?
                 ORDER BY role DESC, attendee_user_id
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_participants
+                WHERE negotiation_id=%s
+                ORDER BY role DESC, attendee_user_id
+                """),
                 (negotiation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -2610,11 +2905,15 @@ class MeetingCoordinatorStore:
     def list_negotiation_events(self, negotiation_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_events
                 WHERE negotiation_id=?
                 ORDER BY event_sequence
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_events
+                WHERE negotiation_id=%s
+                ORDER BY event_sequence
+                """),
                 (negotiation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -2638,11 +2937,11 @@ class MeetingCoordinatorStore:
             raise ValueError('CONTINUATION_CASE_MISMATCH')
         case_id = basis.pending_owner_refs[0]
         with self._connect() as conn:
-            conn.execute('BEGIN IMMEDIATE')
-            case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', (case_id,)).fetchone()
+            hosted.begin_write(conn)
+            case = conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'), (case_id,)).fetchone()
             if case is None:
                 raise KeyError(case_id)
-            events = [dict(row) for row in conn.execute('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', (case_id,))]
+            events = [dict(row) for row in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', 'SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=%s ORDER BY event_sequence'), (case_id,))]
             if any(row['event_type'] == 'SEMANTIC_BASIS_CONSUMED' for row in events):
                 raise ValueError('CONTINUATION_ALREADY_CONSUMED')
             native_state = {'case':dict(case), 'events':events, 'slots':self.list_candidate_slots(case_id)}
@@ -2660,7 +2959,7 @@ class MeetingCoordinatorStore:
         from contracts.workflow_execution import replay_meeting_execution, hash_value
         with self._connect() as conn:
             conn.execute('BEGIN')
-            case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',(negotiation_id,)).fetchone()
+            case = conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),(negotiation_id,)).fetchone()
             if not case:
                 raise KeyError(negotiation_id)
             if not case['workflow_binding_json']:
@@ -2668,9 +2967,9 @@ class MeetingCoordinatorStore:
             binding = json.loads(case['workflow_binding_json'])
             if binding['organizationId'] != case['organization_id'] or binding['workspaceId'] != case['workspace_id'] or hash_value(binding) != case['workflow_binding_hash']:
                 raise ValueError('WORKFLOW_INSTANCE_BINDING_HASH_MISMATCH')
-            events = [dict(row) for row in conn.execute('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence',(negotiation_id,))]
+            events = [dict(row) for row in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', 'SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=%s ORDER BY event_sequence'),(negotiation_id,))]
             projection = replay_meeting_execution(binding=binding,instance_id=negotiation_id,events=events)
-            sealed = conn.execute('SELECT evidence_json FROM meeting_workflow_execution_receipts WHERE negotiation_id=? AND event_count=?',(negotiation_id,len(events))).fetchone()
+            sealed = conn.execute(hosted.sql_query('SELECT evidence_json FROM meeting_workflow_execution_receipts WHERE negotiation_id=? AND event_count=?', 'SELECT evidence_json FROM meeting_workflow_execution_receipts WHERE negotiation_id=%s AND event_count=%s'),(negotiation_id,len(events))).fetchone()
             receipt = json.loads(sealed['evidence_json'])['receipt'] if sealed else None
             if receipt:
                 replay_meeting_execution(binding=binding,instance_id=negotiation_id,events=events,receipt=receipt)
@@ -2680,8 +2979,8 @@ class MeetingCoordinatorStore:
         """Seal a native owner snapshot; no caller-supplied claims or artifacts."""
         from contracts.workflow_execution import replay_meeting_execution, meeting_execution_receipt, hash_value
         with self._connect() as conn:
-            conn.execute('BEGIN IMMEDIATE')
-            case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',(negotiation_id,)).fetchone()
+            hosted.begin_write(conn)
+            case = conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),(negotiation_id,)).fetchone()
             if not case:
                 raise KeyError(negotiation_id)
             if not case['workflow_binding_json']:
@@ -2689,26 +2988,30 @@ class MeetingCoordinatorStore:
             binding = json.loads(case['workflow_binding_json'])
             if binding['organizationId'] != case['organization_id'] or binding['workspaceId'] != case['workspace_id'] or hash_value(binding) != case['workflow_binding_hash']:
                 raise ValueError('WORKFLOW_INSTANCE_BINDING_HASH_MISMATCH')
-            events = [dict(row) for row in conn.execute('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence',(negotiation_id,))]
+            events = [dict(row) for row in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', 'SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=%s ORDER BY event_sequence'),(negotiation_id,))]
             projection = replay_meeting_execution(binding=binding,instance_id=negotiation_id,events=events)
             receipt = meeting_execution_receipt(binding=binding,instance_id=negotiation_id,events=events,projection=projection)
             evidence = {'binding':binding, 'events':events, **projection, 'receipt':receipt}
-            prior = conn.execute('SELECT evidence_json FROM meeting_workflow_execution_receipts WHERE negotiation_id=? AND event_count=?',(negotiation_id,len(events))).fetchone()
+            prior = conn.execute(hosted.sql_query('SELECT evidence_json FROM meeting_workflow_execution_receipts WHERE negotiation_id=? AND event_count=?', 'SELECT evidence_json FROM meeting_workflow_execution_receipts WHERE negotiation_id=%s AND event_count=%s'),(negotiation_id,len(events))).fetchone()
             if prior:
                 if json.loads(prior['evidence_json']) != evidence:
                     raise ValueError('WORKFLOW_RECEIPT_IMMUTABILITY_VIOLATION')
             else:
-                conn.execute('INSERT INTO meeting_workflow_execution_receipts VALUES (?,?,?,?)',(receipt['receipt_hash'],negotiation_id,len(events),_json(evidence)))
+                conn.execute(hosted.sql_query('INSERT INTO meeting_workflow_execution_receipts VALUES (?,?,?,?)', 'INSERT INTO meeting_workflow_execution_receipts VALUES (%s,%s,%s,%s)'),(receipt['receipt_hash'],negotiation_id,len(events),_json(evidence)))
         return evidence
 
     def list_negotiation_messages(self, negotiation_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_messages
                 WHERE negotiation_id=?
                 ORDER BY created_at, message_event_id
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_messages
+                WHERE negotiation_id=%s
+                ORDER BY created_at, message_event_id
+                """),
                 (negotiation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -2716,11 +3019,15 @@ class MeetingCoordinatorStore:
     def list_negotiation_votes(self, negotiation_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_votes
                 WHERE negotiation_id=?
                 ORDER BY created_at, vote_id
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_votes
+                WHERE negotiation_id=%s
+                ORDER BY created_at, vote_id
+                """),
                 (negotiation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -2728,11 +3035,15 @@ class MeetingCoordinatorStore:
     def list_finalize_attempts(self, negotiation_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_finalize_attempts
                 WHERE negotiation_id=?
                 ORDER BY created_at, finalize_attempt_id
-                """,
+                """, """
+                SELECT * FROM meeting_time_finalize_attempts
+                WHERE negotiation_id=%s
+                ORDER BY created_at, finalize_attempt_id
+                """),
                 (negotiation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -2758,21 +3069,31 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiation_participants
                 SET latest_response_status=?,
                     last_response_at=COALESCE(?, last_response_at),
                     responded_at=COALESCE(?, last_response_at),
                     updated_at=?
                 WHERE negotiation_id=? AND attendee_user_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiation_participants
+                SET latest_response_status=%s,
+                    last_response_at=COALESCE(%s, last_response_at),
+                    responded_at=COALESCE(%s, last_response_at),
+                    updated_at=%s
+                WHERE negotiation_id=%s AND attendee_user_id=%s
+                """),
                 (normalized, now if responded else None, now if responded else None, now, negotiation_id, attendee_user_id),
             )
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_participants
                 WHERE negotiation_id=? AND attendee_user_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_participants
+                WHERE negotiation_id=%s AND attendee_user_id=%s
+                """),
                 (negotiation_id, attendee_user_id),
             ).fetchone()
         if row is None:
@@ -2785,13 +3106,19 @@ class MeetingCoordinatorStore:
     ) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_attendees
                 WHERE monitor_id=?
                   AND response_status='declined'
                   AND negotiation_status='none'
                 ORDER BY attendee_user_id
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_attendees
+                WHERE monitor_id=%s
+                  AND response_status='declined'
+                  AND negotiation_status='none'
+                ORDER BY attendee_user_id
+                """),
                 (monitor_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -2805,7 +3132,7 @@ class MeetingCoordinatorStore:
                     return payload
         return None
 
-    def commit_api_continuation_result(self, record, *, response, runtime_context):
+    def commit_api_continuation_result(self, record, *, response, runtime_context, connection=None):
         """G1 version fencing and result history commit in the existing domain transaction."""
         from contracts.workflow_execution import authorize_meeting_requester_mutation,hash_value,verify_meeting_binding
         from agents.durable_event_arbitration import DurableEventInbox,WorkflowVersion
@@ -2813,7 +3140,7 @@ class MeetingCoordinatorStore:
         payload=json.loads(record.payload_json)
         if len(response.encode('utf-8'))>16384: raise ValueError('API_RESULT_TOO_LARGE')
         def state(conn):
-            row=conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?',(record.workflow_id,)).fetchone()
+            row=conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),(record.workflow_id,)).fetchone()
             if row is None: raise KeyError(record.workflow_id)
             case=dict(row)
             authorize_meeting_requester_mutation(case,runtime_context.user_id,runtime_context)
@@ -2826,7 +3153,7 @@ class MeetingCoordinatorStore:
             result={'continuation_id':record.continuation_id,'origin_hash':payload['api_actor_origin_hash'],
                 'input_hash':record.payload_hash,'response':response,'response_hash':hash_value(response),
                 'workflow_id':record.workflow_id,'event_id':record.event_id,
-                'workflow_binding_hash':hash_value(json.loads(conn.execute('SELECT workflow_binding_json FROM meeting_time_negotiations WHERE negotiation_id=?',(record.workflow_id,)).fetchone()[0])),
+                'workflow_binding_hash':hash_value(json.loads(conn.execute(hosted.sql_query('SELECT workflow_binding_json FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT workflow_binding_json FROM meeting_time_negotiations WHERE negotiation_id=%s'),(record.workflow_id,)).fetchone()[0])),
                 'resulting_version':current.version+1}
             self._record_negotiation_event(conn,negotiation_id=record.workflow_id,event_type='API_CONTINUATION_RESULT',
                 actor_type='system',actor_id='semantier_embedded_api',payload=result,
@@ -2834,7 +3161,7 @@ class MeetingCoordinatorStore:
             return WorkflowVersion(current.version+1,False),result
         accepted=DurableEventInbox(self.path).accept(workflow_type='meeting_negotiation',workflow_id=record.workflow_id,
             event_id='api-result:'+record.continuation_id,event_type='API_CONTINUATION_RESULT',dedupe_key='api-result:'+record.continuation_id,
-            expected_state_version=payload['expected_domain_version'],load_state=state,transition=transition)
+            expected_state_version=payload['expected_domain_version'],load_state=state,transition=transition,connection=connection)
         # Never report a stale/terminal no-op as an advancement.
         return accepted.value or self.get_api_continuation_result(record.workflow_id,record.continuation_id)
 
@@ -2864,9 +3191,9 @@ class MeetingCoordinatorStore:
             verify_prospective_origin(actor_origin,runtime_context,workflow_binding)
         now = utc_now_iso()
         with self._connect() as conn:
-            conn.execute('BEGIN IMMEDIATE')
+            hosted.begin_write(conn)
             monitor_row = conn.execute(
-                "SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?",
+                hosted.sql_query("SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?", 'SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=%s'),
                 (monitor_id,),
             ).fetchone()
             if monitor_row is None:
@@ -2884,10 +3211,13 @@ class MeetingCoordinatorStore:
                 event_revision_id,
             )
             existing_row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiations
                 WHERE monitor_id=? AND event_revision_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiations
+                WHERE monitor_id=%s AND event_revision_id=%s
+                """),
                 (monitor_id, event_revision_id),
             ).fetchone()
             if existing_row is None:
@@ -2903,7 +3233,7 @@ class MeetingCoordinatorStore:
                 )
                 trigger_ids = [trigger_attendee_user_id]
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     INSERT INTO meeting_time_negotiations(
                         negotiation_id, monitor_id, workspace_id, event_id,
                         event_revision_id, calendar_id, creator_user_id,
@@ -2922,7 +3252,26 @@ class MeetingCoordinatorStore:
                         0, 5, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL,
                         ?, ?, NULL, NULL, ?, 'not_started', NULL, ?, ?, ?, ?, ?
                     )
-                    """,
+                    """, """
+                    INSERT INTO meeting_time_negotiations(
+                        negotiation_id, monitor_id, workspace_id, event_id,
+                        event_revision_id, calendar_id, creator_user_id,
+                        session_id,
+                        declined_attendee_user_id, status, current_round, max_rounds,
+                        duration_minutes, timezone, original_start_time,
+                        original_end_time, selected_slot_json,
+                        creator_delivery_binding_json, payload_json,
+                        last_agent_error, failure_reason, created_at, updated_at,
+                        completed_at, kanban_task_id, expires_at_utc, finalize_status,
+                        finalize_attempt_id, trigger_attendee_user_ids_json,
+                        organization_id, workflow_binding_json, workflow_binding_hash, actor_origin_json
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending_decliner_input',
+                        0, 5, %s, %s, %s, %s, NULL, %s, %s, NULL, NULL,
+                        %s, %s, NULL, NULL, %s, 'not_started', NULL, %s, %s, %s, %s, %s
+                    )
+                    """),
                     (
                         negotiation_id,
                         monitor_id,
@@ -2978,24 +3327,31 @@ class MeetingCoordinatorStore:
                     raise ValueError('WORKFLOW_SCOPE_MISMATCH')
                 if resolved_session_id and not existing_row["session_id"]:
                     conn.execute(
-                        """
+                        hosted.sql_query("""
                         UPDATE meeting_time_negotiations
                         SET session_id=?
                         WHERE negotiation_id=?
-                        """,
+                        """, """
+                        UPDATE meeting_time_negotiations
+                        SET session_id=%s
+                        WHERE negotiation_id=%s
+                        """),
                         (resolved_session_id, negotiation_id),
                     )
 
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             negotiation = dict(row)
             attendee_row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_attendees
                 WHERE monitor_id=? AND attendee_user_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_attendees
+                WHERE monitor_id=%s AND attendee_user_id=%s
+                """),
                 (monitor_id, trigger_attendee_user_id),
             ).fetchone()
             if attendee_row is None:
@@ -3024,11 +3380,15 @@ class MeetingCoordinatorStore:
                 trigger_ids.append(trigger_attendee_user_id)
                 trigger_ids = sorted(trigger_ids)
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     UPDATE meeting_time_negotiations
                     SET trigger_attendee_user_ids_json=?, updated_at=?
                     WHERE negotiation_id=?
-                    """,
+                    """, """
+                    UPDATE meeting_time_negotiations
+                    SET trigger_attendee_user_ids_json=%s, updated_at=%s
+                    WHERE negotiation_id=%s
+                    """),
                     (_json(trigger_ids), now, negotiation_id),
                 )
                 self._record_negotiation_event(
@@ -3043,7 +3403,7 @@ class MeetingCoordinatorStore:
                 )
 
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_time_negotiation_participants(
                     negotiation_id, attendee_user_id, message_user_id, display_name,
                     role, required_for_consent, latest_response_status,
@@ -3057,7 +3417,21 @@ class MeetingCoordinatorStore:
                     message_user_id=excluded.message_user_id,
                     display_name=excluded.display_name,
                     updated_at=excluded.updated_at
-                """,
+                """, """
+                INSERT INTO meeting_time_negotiation_participants(
+                    negotiation_id, attendee_user_id, message_user_id, display_name,
+                    role, required_for_consent, latest_response_status,
+                    latest_slot_id, last_contacted_at, last_response_at,
+                    delivery_status, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, 'decliner', 1, 'unknown', NULL, NULL, NULL, 'ready', %s, %s)
+                ON CONFLICT(negotiation_id, attendee_user_id) DO UPDATE SET
+                    role='decliner',
+                    required_for_consent=1,
+                    message_user_id=excluded.message_user_id,
+                    display_name=excluded.display_name,
+                    updated_at=excluded.updated_at
+                """),
                 (
                     negotiation_id,
                     trigger_attendee_user_id,
@@ -3068,7 +3442,7 @@ class MeetingCoordinatorStore:
                 ),
             )
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_time_negotiation_participants(
                     negotiation_id, attendee_user_id, message_user_id, display_name,
                     role, required_for_consent, latest_response_status,
@@ -3077,15 +3451,28 @@ class MeetingCoordinatorStore:
                 )
                 VALUES (?, ?, NULL, NULL, 'requester', 0, 'unknown', NULL, NULL, NULL, 'ready', ?, ?)
                 ON CONFLICT(negotiation_id, attendee_user_id) DO UPDATE SET updated_at=excluded.updated_at
-                """,
+                """, """
+                INSERT INTO meeting_time_negotiation_participants(
+                    negotiation_id, attendee_user_id, message_user_id, display_name,
+                    role, required_for_consent, latest_response_status,
+                    latest_slot_id, last_contacted_at, last_response_at,
+                    delivery_status, created_at, updated_at
+                )
+                VALUES (%s, %s, NULL, NULL, 'requester', 0, 'unknown', NULL, NULL, NULL, 'ready', %s, %s)
+                ON CONFLICT(negotiation_id, attendee_user_id) DO UPDATE SET updated_at=excluded.updated_at
+                """),
                 (negotiation_id, monitor["creator_user_id"], now, now),
             )
             attendee_rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_attendees
                 WHERE monitor_id=?
                 ORDER BY attendee_user_id
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_attendees
+                WHERE monitor_id=%s
+                ORDER BY attendee_user_id
+                """),
                 (monitor_id,),
             ).fetchall()
             for participant_row in attendee_rows:
@@ -3094,7 +3481,7 @@ class MeetingCoordinatorStore:
                 if participant_user_id == trigger_attendee_user_id:
                     continue
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     INSERT INTO meeting_time_negotiation_participants(
                         negotiation_id, attendee_user_id, message_user_id, display_name,
                         role, required_for_consent, latest_response_status,
@@ -3106,7 +3493,19 @@ class MeetingCoordinatorStore:
                         message_user_id=excluded.message_user_id,
                         display_name=excluded.display_name,
                         updated_at=excluded.updated_at
-                    """,
+                    """, """
+                    INSERT INTO meeting_time_negotiation_participants(
+                        negotiation_id, attendee_user_id, message_user_id, display_name,
+                        role, required_for_consent, latest_response_status,
+                        latest_slot_id, last_contacted_at, last_response_at,
+                        delivery_status, created_at, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, 'attendee', 1, 'unknown', NULL, NULL, NULL, 'ready', %s, %s)
+                    ON CONFLICT(negotiation_id, attendee_user_id) DO UPDATE SET
+                        message_user_id=excluded.message_user_id,
+                        display_name=excluded.display_name,
+                        updated_at=excluded.updated_at
+                    """),
                     (
                         negotiation_id,
                         participant_user_id,
@@ -3117,15 +3516,19 @@ class MeetingCoordinatorStore:
                     ),
                 )
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_rsvp_attendees
                 SET negotiation_status='created', negotiation_id=?
                 WHERE monitor_id=? AND attendee_user_id=?
-                """,
+                """, """
+                UPDATE meeting_rsvp_attendees
+                SET negotiation_status='created', negotiation_id=%s
+                WHERE monitor_id=%s AND attendee_user_id=%s
+                """),
                 (negotiation_id, monitor_id, trigger_attendee_user_id),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
         return dict(row)
@@ -3162,51 +3565,51 @@ class MeetingCoordinatorStore:
                 f"unsupported negotiation patch fields: {', '.join(sorted(unknown))}"
             )
         now = utc_now_iso()
-        assignments = ["status=?", "updated_at=?"]
+        assignments = [hosted.sql_query("status=?", 'status=%s'), hosted.sql_query("updated_at=?", 'updated_at=%s')]
         values: list[Any] = [next_state, now]
         with self._connect() as conn:
             current_record = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if current_record is None:
                 raise KeyError(negotiation_id)
             if next_state in TERMINAL_NEGOTIATION_STATUSES:
                 if "terminal_authority" not in patch:
-                    assignments.append("terminal_authority=?")
+                    assignments.append(hosted.sql_query("terminal_authority=?", 'terminal_authority=%s'))
                     values.append(actor_id or "system")
                 if "terminal_at" not in patch:
-                    assignments.append("terminal_at=?")
+                    assignments.append(hosted.sql_query("terminal_at=?", 'terminal_at=%s'))
                     values.append(now)
                 if "terminal_reason" not in patch:
-                    assignments.append("terminal_reason=?")
+                    assignments.append(hosted.sql_query("terminal_reason=?", 'terminal_reason=%s'))
                     values.append(f"{next_state} terminal transition")
                 if "terminal_event_revision_id" not in patch:
-                    assignments.append("terminal_event_revision_id=COALESCE(terminal_event_revision_id, ?)")
+                    assignments.append(hosted.sql_query("terminal_event_revision_id=COALESCE(terminal_event_revision_id, ?)", 'terminal_event_revision_id=COALESCE(terminal_event_revision_id, %s)'))
                     values.append(current_record["event_revision_id"])
         for key, value in patch.items():
-            assignments.append(f"{key}=?")
+            assignments.append(hosted.sql_query(f"{key}=?", f'{key}=%s'))
             values.append(
                 _json(value)
                 if key.endswith("_json") and not isinstance(value, str)
                 else value
             )
         if next_state in TERMINAL_NEGOTIATION_STATUSES and "completed_at" not in patch:
-            assignments.append("completed_at=COALESCE(completed_at, ?)")
+            assignments.append(hosted.sql_query("completed_at=COALESCE(completed_at, ?)", 'completed_at=COALESCE(completed_at, %s)'))
             values.append(now)
         values.extend([negotiation_id, expected_state])
         cursor = conn.execute(
-            f"""
+            hosted.sql_query(f"""
             UPDATE meeting_time_negotiations
             SET {", ".join(assignments)}
             WHERE negotiation_id=?
               AND status=?
-            """,
+            """, f"\n            UPDATE meeting_time_negotiations\n            SET {', '.join(assignments)}\n            WHERE negotiation_id=%s\n              AND status=%s\n            "),
             values,
         )
         if int(cursor.rowcount or 0) != 1:
             row = conn.execute(
-                "SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT status FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if row is None:
@@ -3216,7 +3619,7 @@ class MeetingCoordinatorStore:
             return {"ok": False, "reason": "state_conflict"}
         record = dict(
             conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
         )
@@ -3301,13 +3704,19 @@ class MeetingCoordinatorStore:
         )
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_time_candidate_slots(
                     slot_id, negotiation_id, proposed_by_user_id, round_number,
                     start_time, end_time, timezone, source_text, status, created_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
-                """,
+                """, """
+                INSERT INTO meeting_time_candidate_slots(
+                    slot_id, negotiation_id, proposed_by_user_id, round_number,
+                    start_time, end_time, timezone, source_text, status, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'candidate', %s)
+                """),
                 (
                     slot_id,
                     negotiation_id,
@@ -3333,7 +3742,7 @@ class MeetingCoordinatorStore:
                 },
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_candidate_slots WHERE slot_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_candidate_slots WHERE slot_id=?", 'SELECT * FROM meeting_time_candidate_slots WHERE slot_id=%s'),
                 (slot_id,),
             ).fetchone()
         return dict(row)
@@ -3341,11 +3750,15 @@ class MeetingCoordinatorStore:
     def list_candidate_slots(self, negotiation_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_candidate_slots
                 WHERE negotiation_id=?
                 ORDER BY round_number, created_at, slot_id
-                """,
+                """, """
+                SELECT * FROM meeting_time_candidate_slots
+                WHERE negotiation_id=%s
+                ORDER BY round_number, created_at, slot_id
+                """),
                 (negotiation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -3358,11 +3771,15 @@ class MeetingCoordinatorStore:
     ) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_votes
                 WHERE negotiation_id=? AND slot_id=?
                 ORDER BY created_at, vote_id
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_votes
+                WHERE negotiation_id=%s AND slot_id=%s
+                ORDER BY created_at, vote_id
+                """),
                 (negotiation_id, slot_id),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -3381,7 +3798,7 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiation_participants
                 SET latest_response_status=?,
                     latest_slot_id=COALESCE(?, latest_slot_id),
@@ -3390,7 +3807,16 @@ class MeetingCoordinatorStore:
                     last_response_at=CASE WHEN ? THEN ? ELSE last_response_at END,
                     updated_at=?
                 WHERE negotiation_id=? AND attendee_user_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiation_participants
+                SET latest_response_status=%s,
+                    latest_slot_id=COALESCE(%s, latest_slot_id),
+                    delivery_status=COALESCE(%s, delivery_status),
+                    last_contacted_at=CASE WHEN %s THEN %s ELSE last_contacted_at END,
+                    last_response_at=CASE WHEN %s THEN %s ELSE last_response_at END,
+                    updated_at=%s
+                WHERE negotiation_id=%s AND attendee_user_id=%s
+                """),
                 (
                     latest_response_status,
                     latest_slot_id,
@@ -3405,10 +3831,13 @@ class MeetingCoordinatorStore:
                 ),
             )
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_participants
                 WHERE negotiation_id=? AND attendee_user_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_participants
+                WHERE negotiation_id=%s AND attendee_user_id=%s
+                """),
                 (negotiation_id, attendee_user_id),
             ).fetchone()
         if row is None:
@@ -3462,14 +3891,21 @@ class MeetingCoordinatorStore:
         with self._connect() as conn:
             try:
                 conn.execute(
-                    """
+                    hosted.sql_query("""
                     INSERT INTO meeting_time_negotiation_messages(
                         message_event_id, negotiation_id, direction,
                         participant_user_id, message_channel, message_id,
                         message_type, payload_json, agent_trace_ref, created_at
                     )
                     VALUES (?, ?, 'outbound', ?, 'feishu', NULL, ?, ?, ?, ?)
-                    """,
+                    """, """
+                    INSERT INTO meeting_time_negotiation_messages(
+                        message_event_id, negotiation_id, direction,
+                        participant_user_id, message_channel, message_id,
+                        message_type, payload_json, agent_trace_ref, created_at
+                    )
+                    VALUES (%s, %s, 'outbound', %s, 'feishu', NULL, %s, %s, %s, %s)
+                    """),
                     (
                         message_event_id,
                         negotiation_id,
@@ -3493,13 +3929,16 @@ class MeetingCoordinatorStore:
                         "participant_user_id": participant_user_id,
                     },
                 )
-            except sqlite3.IntegrityError:
+            except hosted.integrity_errors():
                 reserved = False
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_messages
                 WHERE message_event_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_messages
+                WHERE message_event_id=%s
+                """),
                 (message_event_id,),
             ).fetchone()
         return {"reserved": reserved, "message": dict(row)}
@@ -3513,15 +3952,19 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiation_messages
                 SET message_id=?
                 WHERE message_event_id=? AND direction='outbound'
-                """,
+                """, """
+                UPDATE meeting_time_negotiation_messages
+                SET message_id=%s
+                WHERE message_event_id=%s AND direction='outbound'
+                """),
                 (provider_message_id, message_event_id),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?", 'SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=%s'),
                 (message_event_id,),
             ).fetchone()
             if row is None:
@@ -3543,7 +3986,7 @@ class MeetingCoordinatorStore:
     def get_negotiation_message(self, message_event_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?", 'SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=%s'),
                 (message_event_id,),
             ).fetchone()
         if row is None:
@@ -3557,12 +4000,17 @@ class MeetingCoordinatorStore:
     ) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiation_messages
                 WHERE direction='outbound'
                   AND message_channel='feishu'
                   AND message_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiation_messages
+                WHERE direction='outbound'
+                  AND message_channel='feishu'
+                  AND message_id=%s
+                """),
                 (provider_message_id,),
             ).fetchone()
         if row is None:
@@ -3609,14 +4057,20 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             inserted = conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT OR IGNORE INTO meeting_time_negotiation_messages(
                     message_event_id, negotiation_id, direction,
                     participant_user_id, message_channel, message_id,
                     message_type, payload_json, agent_trace_ref, created_at
                 )
                 VALUES (?, ?, 'inbound', ?, 'feishu', ?, ?, ?, NULL, ?)
-                """,
+                """, """
+                INSERT INTO meeting_time_negotiation_messages(
+                    message_event_id, negotiation_id, direction,
+                    participant_user_id, message_channel, message_id,
+                    message_type, payload_json, agent_trace_ref, created_at
+                )
+                VALUES (%s, %s, 'inbound', %s, 'feishu', %s, %s, %s, NULL, %s) ON CONFLICT DO NOTHING"""),
                 (
                     message_event_id,
                     negotiation_id,
@@ -3642,7 +4096,7 @@ class MeetingCoordinatorStore:
                     },
                 )
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=?", 'SELECT * FROM meeting_time_negotiation_messages WHERE message_event_id=%s'),
                 (message_event_id,),
             ).fetchone()
         result = dict(row)
@@ -3666,13 +4120,19 @@ class MeetingCoordinatorStore:
         )
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_time_negotiation_votes(
                     vote_id, negotiation_id, slot_id, attendee_user_id, vote,
                     alternative_slot_id, note, created_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                """, """
+                INSERT INTO meeting_time_negotiation_votes(
+                    vote_id, negotiation_id, slot_id, attendee_user_id, vote,
+                    alternative_slot_id, note, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """),
                 (
                     vote_id,
                     negotiation_id,
@@ -3697,7 +4157,7 @@ class MeetingCoordinatorStore:
                 },
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_negotiation_votes WHERE vote_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiation_votes WHERE vote_id=?", 'SELECT * FROM meeting_time_negotiation_votes WHERE vote_id=%s'),
                 (vote_id,),
             ).fetchone()
         return dict(row)
@@ -3705,7 +4165,7 @@ class MeetingCoordinatorStore:
     def get_candidate_slot(self, slot_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM meeting_time_candidate_slots WHERE slot_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_candidate_slots WHERE slot_id=?", 'SELECT * FROM meeting_time_candidate_slots WHERE slot_id=%s'),
                 (slot_id,),
             ).fetchone()
         if row is None:
@@ -3740,10 +4200,13 @@ class MeetingCoordinatorStore:
             raise ValueError("no required participants for consent")
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT attendee_user_id, vote FROM meeting_time_negotiation_votes
                 WHERE negotiation_id=? AND slot_id=?
-                """,
+                """, """
+                SELECT attendee_user_id, vote FROM meeting_time_negotiation_votes
+                WHERE negotiation_id=%s AND slot_id=%s
+                """),
                 (negotiation_id, selected_slot_id),
             ).fetchall()
         yes_ids = {str(row["attendee_user_id"]) for row in rows if row["vote"] == "yes"}
@@ -3785,7 +4248,7 @@ class MeetingCoordinatorStore:
         slot_timezone = ""
         with self._connect() as conn:
             negotiation = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if negotiation is None:
@@ -3797,7 +4260,7 @@ class MeetingCoordinatorStore:
                     raise ValueError("selected_slot_id is required")
             try:
                 row = conn.execute(
-                    "SELECT * FROM meeting_time_candidate_slots WHERE slot_id=?",
+                    hosted.sql_query("SELECT * FROM meeting_time_candidate_slots WHERE slot_id=?", 'SELECT * FROM meeting_time_candidate_slots WHERE slot_id=%s'),
                     (selected_slot_id,),
                 ).fetchone()
             except Exception:
@@ -3845,7 +4308,7 @@ class MeetingCoordinatorStore:
                 "fin", ["meeting_time_finalize_attempt:v1", key], length=32
             )
             conn.execute(
-                """
+                hosted.sql_query("""
                 INSERT INTO meeting_time_finalize_attempts(
                     finalize_attempt_id, finalize_idempotency_key, negotiation_id,
                     event_revision_id, selected_slot_id, decision_source,
@@ -3854,7 +4317,16 @@ class MeetingCoordinatorStore:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?)
                 ON CONFLICT(finalize_idempotency_key) DO NOTHING
-                """,
+                """, """
+                INSERT INTO meeting_time_finalize_attempts(
+                    finalize_attempt_id, finalize_idempotency_key, negotiation_id,
+                    event_revision_id, selected_slot_id, decision_source,
+                    requested_by_user_id, calendar_update_payload_json, status,
+                    next_retry_at, calendar_update_result_json, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending', NULL, NULL, %s, %s)
+                ON CONFLICT(finalize_idempotency_key) DO NOTHING
+                """),
                 (
                     attempt_id,
                     key,
@@ -3880,10 +4352,13 @@ class MeetingCoordinatorStore:
                 },
             )
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_finalize_attempts
                 WHERE finalize_idempotency_key=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_finalize_attempts
+                WHERE finalize_idempotency_key=%s
+                """),
                 (key,),
             ).fetchone()
         return dict(row)
@@ -3896,20 +4371,27 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             exists = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT 1 FROM meeting_time_finalize_attempts
                 WHERE finalize_attempt_id=? AND negotiation_id=?
-                """,
+                """, """
+                SELECT 1 FROM meeting_time_finalize_attempts
+                WHERE finalize_attempt_id=%s AND negotiation_id=%s
+                """),
                 (finalize_attempt_id, negotiation_id),
             ).fetchone()
             if exists is None:
                 raise ValueError("finalize_attempt_id does not exist for negotiation")
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiations
                 SET finalize_attempt_id=?, updated_at=?
                 WHERE negotiation_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiations
+                SET finalize_attempt_id=%s, updated_at=%s
+                WHERE negotiation_id=%s
+                """),
                 (finalize_attempt_id, now, negotiation_id),
             )
         return self.get_negotiation(negotiation_id)
@@ -3926,14 +4408,14 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT status FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(negotiation_id)
             prior_state = row["status"]
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiations
                 SET status='failed',
                     failure_reason=?,
@@ -3945,7 +4427,19 @@ class MeetingCoordinatorStore:
                     completed_at=COALESCE(completed_at, ?),
                     updated_at=?
                 WHERE negotiation_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiations
+                SET status='failed',
+                    failure_reason=%s,
+                    finalize_status=%s,
+                    terminal_authority=COALESCE(terminal_authority, %s),
+                    terminal_reason=COALESCE(terminal_reason, %s),
+                    terminal_at=COALESCE(terminal_at, %s),
+                    terminal_event_revision_id=COALESCE(terminal_event_revision_id, event_revision_id),
+                    completed_at=COALESCE(completed_at, %s),
+                    updated_at=%s
+                WHERE negotiation_id=%s
+                """),
                 (
                     failure_reason,
                     finalize_status,
@@ -3958,7 +4452,7 @@ class MeetingCoordinatorStore:
                 ),
             )
             updated = conn.execute(
-                "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
                 (negotiation_id,),
             ).fetchone()
             self._record_negotiation_event(
@@ -3999,15 +4493,19 @@ class MeetingCoordinatorStore:
         )
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_finalize_attempts
                 SET status=?, next_retry_at=?, calendar_update_result_json=?, updated_at=?
                 WHERE finalize_attempt_id=?
-                """,
+                """, """
+                UPDATE meeting_time_finalize_attempts
+                SET status=%s, next_retry_at=%s, calendar_update_result_json=%s, updated_at=%s
+                WHERE finalize_attempt_id=%s
+                """),
                 (status, next_retry_iso, _json(detail), now, finalize_attempt_id),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=?", 'SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=%s'),
                 (finalize_attempt_id,),
             ).fetchone()
             if row is None:
@@ -4029,16 +4527,21 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             updated = conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_finalize_attempts
                 SET status='calendar_update_started', updated_at=?
                 WHERE finalize_attempt_id=?
                   AND status IN ('pending', 'calendar_update_failed_retryable')
-                """,
+                """, """
+                UPDATE meeting_time_finalize_attempts
+                SET status='calendar_update_started', updated_at=%s
+                WHERE finalize_attempt_id=%s
+                  AND status IN ('pending', 'calendar_update_failed_retryable')
+                """),
                 (now, finalize_attempt_id),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=?", 'SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=%s'),
                 (finalize_attempt_id,),
             ).fetchone()
             if row is not None and updated.rowcount > 0:
@@ -4063,30 +4566,43 @@ class MeetingCoordinatorStore:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_finalize_attempts
                 SET status='calendar_update_succeeded',
                     calendar_update_result_json=?,
                     next_retry_at=NULL,
                     updated_at=?
                 WHERE finalize_attempt_id=?
-                """,
+                """, """
+                UPDATE meeting_time_finalize_attempts
+                SET status='calendar_update_succeeded',
+                    calendar_update_result_json=%s,
+                    next_retry_at=NULL,
+                    updated_at=%s
+                WHERE finalize_attempt_id=%s
+                """),
                 (_json(result), now, finalize_attempt_id),
             )
             row = conn.execute(
-                "SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=?",
+                hosted.sql_query("SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=?", 'SELECT * FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=%s'),
                 (finalize_attempt_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(finalize_attempt_id)
             conn.execute(
-                """
+                hosted.sql_query("""
                 UPDATE meeting_time_negotiations
                 SET finalize_status='succeeded',
                     finalize_attempt_id=?,
                     updated_at=?
                 WHERE negotiation_id=?
-                """,
+                """, """
+                UPDATE meeting_time_negotiations
+                SET finalize_status='succeeded',
+                    finalize_attempt_id=%s,
+                    updated_at=%s
+                WHERE negotiation_id=%s
+                """),
                 (finalize_attempt_id, now, row["negotiation_id"]),
             )
             self._record_negotiation_event(
@@ -4107,7 +4623,7 @@ class MeetingCoordinatorStore:
     ) -> bool:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT status, next_retry_at FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=?",
+                hosted.sql_query("SELECT status, next_retry_at FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=?", 'SELECT status, next_retry_at FROM meeting_time_finalize_attempts WHERE finalize_attempt_id=%s'),
                 (finalize_attempt_id,),
             ).fetchone()
         if row is None:
@@ -4127,7 +4643,7 @@ class MeetingCoordinatorStore:
     ) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT m.*,
                        COUNT(t.delivery_task_id) AS pending_delivery_tasks
                 FROM meeting_rsvp_monitors m
@@ -4142,7 +4658,22 @@ class MeetingCoordinatorStore:
                 GROUP BY m.monitor_id
                 ORDER BY m.updated_at DESC
                 LIMIT ?
-                """,
+                """, """
+                SELECT m.*,
+                       COUNT(t.delivery_task_id) AS pending_delivery_tasks
+                FROM meeting_rsvp_monitors m
+                LEFT JOIN meeting_rsvp_delivery_tasks t
+                  ON t.monitor_id = m.monitor_id
+                 AND t.status IN ('pending', 'failed_retryable')
+                WHERE m.workspace_id=%s
+                  AND (
+                    m.status IN ('pending_start', 'active', 'error', 'complete')
+                    OR t.delivery_task_id IS NOT NULL
+                  )
+                GROUP BY m.monitor_id
+                ORDER BY m.updated_at DESC
+                LIMIT %s
+                """),
                 (workspace_id, int(limit)),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -4155,13 +4686,19 @@ class MeetingCoordinatorStore:
     ) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_rsvp_delivery_tasks
                 WHERE workspace_id=?
                   AND status IN ('pending', 'failed_retryable', 'failed_permanent')
                 ORDER BY updated_at DESC
                 LIMIT ?
-                """,
+                """, """
+                SELECT * FROM meeting_rsvp_delivery_tasks
+                WHERE workspace_id=%s
+                  AND status IN ('pending', 'failed_retryable', 'failed_permanent')
+                ORDER BY updated_at DESC
+                LIMIT %s
+                """),
                 (workspace_id, int(limit)),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -4174,12 +4711,17 @@ class MeetingCoordinatorStore:
     ) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiations
                 WHERE workspace_id=?
                 ORDER BY updated_at DESC
                 LIMIT ?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiations
+                WHERE workspace_id=%s
+                ORDER BY updated_at DESC
+                LIMIT %s
+                """),
                 (workspace_id, int(limit)),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -4193,10 +4735,13 @@ class MeetingCoordinatorStore:
     ) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute(
-                """
+                hosted.sql_query("""
                 SELECT * FROM meeting_time_negotiations
                 WHERE negotiation_id=? AND workspace_id=?
-                """,
+                """, """
+                SELECT * FROM meeting_time_negotiations
+                WHERE negotiation_id=%s AND workspace_id=%s
+                """),
                 (negotiation_id, workspace_id),
             ).fetchone()
         if row is None or (row["workflow_binding_json"] and row["organization_id"] != organization_id):
