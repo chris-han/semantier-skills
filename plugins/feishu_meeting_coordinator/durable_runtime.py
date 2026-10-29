@@ -354,6 +354,9 @@ class MeetingResponsibilityRuntime:
         )
 
     def run(self, negotiation_id: str):
+        from services.meeting_followup_timer_service import selected_core_timer
+        if selected_core_timer(self.store, negotiation_id):
+            raise PermissionError("core reminder continuation is TaskAPI lifecycle-owned")
         item = self.ensure(negotiation_id)
         result = self.dispatcher.run_one(
             responsibility_id=item.responsibility_id,
@@ -366,6 +369,9 @@ class MeetingResponsibilityRuntime:
         return result
 
     def wake_reply(self, *, negotiation_id: str, message_id: str):
+        from services.meeting_followup_timer_service import selected_core_timer
+        if selected_core_timer(self.store, negotiation_id):
+            raise PermissionError("core reminder reply requires verified SDK ingress")
         item = self.existing(negotiation_id)
         if item is None:
             return WakeResult(False, "responsibility_missing")
@@ -408,6 +414,14 @@ class MeetingResponsibilityRuntime:
         return result
 
     def timer_signal(self, *, negotiation_id: str, timer_id: str):
+        from services.meeting_followup_timer_service import selected_core_timer, MeetingFollowupTimerService
+        if selected_core_timer(self.store, negotiation_id):
+            owner = MeetingFollowupTimerService(self.store)
+            row = owner.row(timer_id)
+            if row['workflow_id'] != negotiation_id:
+                raise PermissionError("foreign core timer correlation")
+            reason = owner.accept_timer(timer_id)
+            return WakeResult(reason == 'accepted', reason, owner.row(timer_id)['wake_id'])
         item = self.existing(negotiation_id)
         if item is None:
             return WakeResult(False, "responsibility_missing")

@@ -651,9 +651,10 @@ def _negotiation_workflow_version(
     *, conn, store: MeetingCoordinatorStore, negotiation_id: str
 ):
     from agents.durable_event_arbitration import WorkflowVersion
+    from storage import hosted_postgres as hosted
 
     row = conn.execute(
-        "SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?",
+        hosted.sql_query("SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?", "SELECT status FROM meeting_time_negotiations WHERE negotiation_id=%s"),
         (negotiation_id,),
     ).fetchone()
     if row is None:
@@ -796,6 +797,9 @@ def _dispatch_native_followup_effect(
     store: MeetingCoordinatorStore,
     client: Any,
     item: dict[str, Any],
+    claim_guard=None,
+    evidence_provider=None,
+    transaction_claim_guard=None,
 ) -> dict[str, Any]:
     from agents.effect_outbox import (
         AtomicEffectOutbox,
@@ -818,7 +822,7 @@ def _dispatch_native_followup_effect(
     attendee_user_id = str(item["attendee_user_id"])
     message_event_id = str(item["message_event_id"])
 
-    provider = FeishuMessageEvidenceAdapter(
+    provider = evidence_provider or FeishuMessageEvidenceAdapter(
         get_message=lambda *, message_id: client.get_message(message_id=message_id),
     )
 
@@ -862,6 +866,8 @@ def _dispatch_native_followup_effect(
         claimed = outbox.claim_dispatch(effect_id=effect_id, attempt_id=attempt_id)
         if claimed:
             try:
+                if claim_guard is not None:
+                    claim_guard()
                 result = client.send_attendee_message(
                     attendee_open_ids=[target_id],
                     message=message,
@@ -931,11 +937,14 @@ def _dispatch_native_followup_effect(
         ).strip()
         if not provider_message_id:
             raise RuntimeError("completed followup effect missing provider correlation")
+        if claim_guard is not None:
+            claim_guard()
         applied = store.complete_native_followup_effect(
             negotiation_id=negotiation_id,
             attendee_user_id=attendee_user_id,
             message_event_id=message_event_id,
             provider_message_id=provider_message_id,
+            transaction_guard=transaction_claim_guard,
         )
         return {
             "effect_id": effect_id,
@@ -2203,6 +2212,43 @@ def negotiation_requester_decision(
     )
 
 
+def _render_negotiation_reminder(negotiation, participant):
+    status = str(participant.get("latest_response_status") or "unknown")
+    response_status = {"accepted_slot": "accepted", "declined_slot": "declined"}.get(
+        status, "needs_action"
+    )
+    try:
+        payload_json = json.loads(str(negotiation.get("payload_json") or "{}"))
+    except json.JSONDecodeError:
+        payload_json = {}
+    return _localized_prompt(
+        "FOLLOWUP_MESSAGE.md",
+        _default_locale_for_negotiation(negotiation),
+        attendee_name=str(
+            participant.get("display_name") or participant.get("attendee_user_id")
+        ),
+        meeting_title=str(
+            payload_json.get("meeting_title")
+            or payload_json.get("title")
+            or negotiation["event_id"]
+        ),
+        start_time=f"{negotiation['original_start_time']} - {negotiation['original_end_time']}",
+        organizer_name=str(
+            payload_json.get("creator_name")
+            or payload_json.get("organizer_name")
+            or negotiation["creator_user_id"]
+        ),
+        response_status=response_status,
+        calendar_item_link=str(
+            payload_json.get("calendar_item_url")
+            or payload_json.get("calendar_url")
+            or payload_json.get("event_url")
+            or ""
+        ),
+    )
+
+
+
 def _run_negotiation_followup_business(
     payload: dict[str, Any],
     *,
@@ -2242,44 +2288,8 @@ def _run_negotiation_followup_business(
 
             return _FeishuClient()
 
-        def _response_status_for_reminder(participant: dict[str, Any]) -> str:
-            status = str(participant.get("latest_response_status") or "unknown")
-            if status == "accepted_slot":
-                return "accepted"
-            if status == "declined_slot":
-                return "declined"
-            return "needs_action"
-
-        def _reminder_payload(participant: dict[str, Any]) -> str:
-            try:
-                payload_json = json.loads(str(negotiation.get("payload_json") or "{}"))
-            except json.JSONDecodeError:
-                payload_json = {}
-            return _localized_prompt(
-                "FOLLOWUP_MESSAGE.md",
-                _default_locale_for_negotiation(negotiation),
-                attendee_name=str(
-                    participant.get("display_name") or participant.get("attendee_user_id")
-                ),
-                meeting_title=str(
-                    payload_json.get("meeting_title")
-                    or payload_json.get("title")
-                    or negotiation["event_id"]
-                ),
-                start_time=f"{negotiation['original_start_time']} - {negotiation['original_end_time']}",
-                organizer_name=str(
-                    payload_json.get("creator_name")
-                    or payload_json.get("organizer_name")
-                    or negotiation["creator_user_id"]
-                ),
-                response_status=_response_status_for_reminder(participant),
-                calendar_item_link=str(
-                    payload_json.get("calendar_item_url")
-                    or payload_json.get("calendar_url")
-                    or payload_json.get("event_url")
-                    or ""
-                ),
-            )
+        def _reminder_payload(participant):
+            return _render_negotiation_reminder(negotiation, participant)
 
         def _parse_rsvp_status(raw_status: Any) -> str:
             normalized = _normalize_feishu_rsvp_status(raw_status)
@@ -3134,6 +3144,12 @@ def submit_negotiation_reply(
     feishu_client: Any | None = None,
     core_ingress=None,
 ) -> dict[str, Any]:
+    from services.meeting_followup_timer_service import selected_core_timer, MeetingFollowupTimerService
+    selected_case_id = str(payload.get('negotiation_id') or '')
+    if selected_case_id and selected_core_timer(store, selected_case_id):
+        if core_ingress is None:
+            raise PermissionError('core reminder requires verified SDK ingress')
+        return MeetingFollowupTimerService(store).accept_verified(core_ingress)
     from services.meeting_clarification_delivery_service import (
         selected, MeetingClarificationDeliveryService,
     )
@@ -4176,3 +4192,72 @@ def continue_from_semantic_basis(ctx, *, store, projection_store, checkpoint_ser
         store=store, calendar_client=calendar_client, runtime_context=ctx)
     return {'consumption':consumed, 'finalization':result,
             'evidence':store.read_workflow_execution(case_id)}
+
+
+def run_core_followup_once(
+    *,
+    store,
+    negotiation_id,
+    timer_id,
+    participant_id,
+    client,
+    claim_guard,
+    transaction_guard,
+    evidence_provider,
+    interval_minutes,
+):
+    """Selected core continuation; reuse eligibility, prompt and effect owners.
+
+    Unlike the incumbent legacy tick this does not poll calendars, infer replies,
+    run a negotiation agent or choose another timer. The core grant is one target.
+    """
+    claim_guard()
+    case = store.get_negotiation(negotiation_id)
+    if _negotiation_is_terminal(case):
+        raise PermissionError("terminal meeting")
+    participant = next(
+        p
+        for p in store.list_negotiation_participants(negotiation_id)
+        if p["attendee_user_id"] == participant_id
+    )
+    maximum = int(store.get_workspace_state(case["workspace_id"])["max_followups"])
+    if maximum != 1:
+        raise PermissionError("selected one-followup policy changed")
+    targets = _material_followup_targets(negotiation_id, store)
+    specs = []
+    if (
+        (targets is None or participant_id in targets)
+        and _followup_reminder_needed(participant)
+        and int(participant.get("followup_count") or 0) < maximum
+        and _followup_due(participant, interval_minutes=interval_minutes)
+    ):
+        specs.append(
+            dict(
+                attendee_user_id=participant_id,
+                target_id=participant.get("message_user_id") or participant_id,
+                message=_render_negotiation_reminder(case, participant).strip(),
+                semantic_round=int(participant.get("followup_count") or 0) + 1,
+            )
+        )
+    effects = _admit_native_followup_effects(
+        negotiation_id=negotiation_id,
+        timer_id=timer_id,
+        store=store,
+        specs=specs,
+        transaction_guard=transaction_guard,
+    )
+    results = []
+    for item in effects:
+        claim_guard()
+        results.append(
+            _dispatch_native_followup_effect(
+                negotiation_id=negotiation_id,
+                store=store,
+                client=client,
+                item=item,
+                claim_guard=claim_guard,
+                evidence_provider=evidence_provider,
+                transaction_claim_guard=transaction_guard,
+            )
+        )
+    return results

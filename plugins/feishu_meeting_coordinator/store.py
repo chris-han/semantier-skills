@@ -2190,9 +2190,13 @@ class MeetingCoordinatorStore:
         attendee_user_id: str,
         message_event_id: str,
         provider_message_id: str,
+        transaction_guard=None,
     ) -> dict[str, Any]:
         now = utc_now_iso()
         with self._connect() as conn:
+            hosted.begin_write(conn)
+            if transaction_guard is not None:
+                transaction_guard(conn)
             row = conn.execute(
                 hosted.sql_query("""
                 SELECT message_id FROM meeting_time_negotiation_messages
