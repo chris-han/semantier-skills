@@ -862,6 +862,7 @@ def send_attendee_message(
     attendee_open_ids: list[str],
     message: str,
     idempotency_key: str | None = None,
+    client: Client | None = None,
 ) -> dict[str, Any]:
     normalized_message = message.strip()
     if not normalized_message:
@@ -871,7 +872,7 @@ def send_attendee_message(
     delivered: list[str] = []
     failed: list[dict[str, str]] = []
     message_ids: dict[str, str] = {}
-    client = _get_client()
+    client = client or _get_client()
 
     for attendee_open_id in attendee_open_ids:
         target = attendee_open_id.strip()
@@ -916,12 +917,12 @@ def send_attendee_message(
     return result
 
 
-def get_message(*, message_id: str) -> dict[str, Any]:
+def get_message(*, message_id: str, client: Client | None = None) -> dict[str, Any]:
     normalized = message_id.strip()
     if not normalized:
         raise FeishuSkillError("message_id is required")
     req = GetMessageRequestBuilder().message_id(normalized).build()
-    data = _unwrap(_get_client().im.v1.message.get(req))
+    data = _unwrap((client or _get_client()).im.v1.message.get(req))
     items = list(_get_attr(data, "items") or [])
     normalized_items: list[dict[str, Any]] = []
     for item in items:
@@ -933,7 +934,8 @@ def get_message(*, message_id: str) -> dict[str, Any]:
                 "update_time": _get_attr(item, "update_time"),
                 "deleted": bool(_get_attr(item, "deleted") or False),
                 "chat_id": str(_get_attr(item, "chat_id") or ""),
-                "body": _get_attr(item, "body"),
+                "body": {"content": _get_attr(_get_attr(item,"body"),"content")},
+                "sender": {key: _get_attr(_get_attr(item,"sender"),key) for key in ("id","id_type","sender_type","tenant_key")},
             }
         )
     matched = next(

@@ -4747,3 +4747,111 @@ class MeetingCoordinatorStore:
         if row is None or (row["workflow_binding_json"] and row["organization_id"] != organization_id):
             raise KeyError(negotiation_id)
         return dict(row)
+
+
+    def apply_core_clarification(
+        self,
+        conn,
+        *,
+        negotiation_id,
+        participant_id,
+        round_number,
+        slot,
+        event_id,
+        input_hash,
+    ):
+        """Joined bounded operation, using existing slot/participant/domain owners."""
+        if not hosted.is_postgres(conn) or not hosted.in_transaction(conn):
+            raise ValueError("core clarification requires joined PG transaction")
+        case = conn.execute(
+            "SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s FOR UPDATE",
+            (negotiation_id,),
+        ).fetchone()
+        if (
+            case is None
+            or case["status"] != "pending_decliner_input"
+            or int(case["current_round"]) + 1 != round_number
+        ):
+            raise ValueError("meeting state changed")
+        slot_id = _hash_id(
+            "slot",
+            [
+                "meeting_time_slot:v1",
+                negotiation_id,
+                slot["start_time"],
+                slot["end_time"],
+                slot["timezone"],
+            ],
+        )
+        conn.execute(
+            "INSERT INTO meeting_time_candidate_slots(slot_id,negotiation_id,proposed_by_user_id,round_number,start_time,end_time,timezone,source_text,status,created_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'candidate',%s)",
+            (
+                slot_id,
+                negotiation_id,
+                participant_id,
+                round_number,
+                slot["start_time"],
+                slot["end_time"],
+                slot["timezone"],
+                "structured clarification",
+                utc_now_iso(),
+            ),
+        )
+        conn.execute(
+            "UPDATE meeting_time_negotiation_participants SET latest_response_status='proposed_slot',latest_slot_id=%s,last_response_at=%s WHERE negotiation_id=%s AND attendee_user_id=%s",
+            (slot_id, utc_now_iso(), negotiation_id, participant_id),
+        )
+        conn.execute(
+            "UPDATE meeting_time_negotiations SET status='collecting_votes',current_round=%s,updated_at=%s WHERE negotiation_id=%s",
+            (round_number, utc_now_iso(), negotiation_id),
+        )
+        self._record_negotiation_event(
+            conn,
+            negotiation_id=negotiation_id,
+            event_type="SLOT_PROPOSED",
+            actor_type="participant",
+            actor_id=participant_id,
+            payload=dict(
+                slot_id=slot_id,
+                **slot,
+                clarification_event=event_id,
+                reply_input_hash=input_hash,
+            ),
+        )
+        self._record_negotiation_event(
+            conn,
+            negotiation_id=negotiation_id,
+            event_type="STATE_TRANSITIONED",
+            actor_type="system",
+            actor_id="core-clarification",
+            prior_state="pending_decliner_input",
+            next_state="collecting_votes",
+            payload={"current_round": round_number},
+        )
+
+    def cancel_core_clarification(self, conn, *, negotiation_id, actor_id):
+        """Join cancellation to core binding revocation; retain prior effect receipts."""
+        if not hosted.is_postgres(conn) or not hosted.in_transaction(conn):
+            raise ValueError("joined PG cancellation required")
+        changed = conn.execute(
+            "UPDATE meeting_time_negotiations SET status='cancelled',terminal_authority=%s,terminal_at=%s,terminal_reason='core clarification cancelled',completed_at=%s,updated_at=%s WHERE negotiation_id=%s AND status='pending_decliner_input'",
+            (
+                "user:" + actor_id,
+                utc_now_iso(),
+                utc_now_iso(),
+                utc_now_iso(),
+                negotiation_id,
+            ),
+        )
+        if changed.rowcount != 1:
+            raise ValueError("meeting cancellation state changed")
+        self._record_negotiation_event(
+            conn,
+            negotiation_id=negotiation_id,
+            event_type="STATE_TRANSITIONED",
+            actor_type="user",
+            actor_id=actor_id,
+            prior_state="pending_decliner_input",
+            next_state="cancelled",
+            payload={"reason": "core clarification cancelled"},
+        )

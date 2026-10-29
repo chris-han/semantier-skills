@@ -3132,7 +3132,17 @@ def submit_negotiation_reply(
     kanban: KanbanClient | None = None,
     cron: CronClient | None = None,
     feishu_client: Any | None = None,
+    core_ingress=None,
 ) -> dict[str, Any]:
+    from services.meeting_clarification_delivery_service import (
+        selected, MeetingClarificationDeliveryService,
+    )
+    case_id = str(payload.get('negotiation_id') or '')
+    if case_id and selected(store, case_id):
+        if core_ingress is None:
+            raise PermissionError('selected core case requires verified SDK ingress')
+        return MeetingClarificationDeliveryService(store).accept_verified(core_ingress)
+
     if (
         payload.get("callback_origin") is True
         and not str(payload.get("negotiation_id") or "").strip()
