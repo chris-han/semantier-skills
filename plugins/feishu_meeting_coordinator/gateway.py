@@ -256,41 +256,6 @@ def ensure_delivery_retry_cron(*, workspace_id: str, cron: CronClient) -> str:
     )
 
 
-def ensure_negotiation_kanban_task(
-    *,
-    negotiation_id: str,
-    store: MeetingCoordinatorStore,
-    kanban: KanbanClient | None = None,
-    session_id: str | None = None,
-) -> dict[str, Any]:
-    from .kanban_client import HermesKanbanClient, negotiation_task_body
-
-    negotiation = store.get_negotiation(negotiation_id)
-    existing_task_id = str(negotiation.get("kanban_task_id") or "").strip()
-    if existing_task_id:
-        _sync_negotiation_kanban_task_body(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
-            session_id=session_id,
-        )
-        return negotiation
-    client = kanban or HermesKanbanClient()
-    body = negotiation_task_body(negotiation=negotiation, session_id=session_id)
-    task_id = client.create_negotiation_task(negotiation=negotiation, body=body)
-    negotiation = store.set_negotiation_kanban_task(
-        negotiation_id,
-        kanban_task_id=task_id,
-    )
-    _sync_negotiation_kanban_task_body(
-        negotiation_id=negotiation_id,
-        store=store,
-        kanban=kanban,
-        session_id=session_id,
-    )
-    return negotiation
-
-
 def _resolve_kanban_client(kanban: KanbanClient | None) -> KanbanClient:
     if kanban is not None:
         return kanban
