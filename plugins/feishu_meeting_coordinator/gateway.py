@@ -2138,19 +2138,10 @@ def negotiation_case_start(
     case_id = str(negotiation['negotiation_id'])
     responsibility = runtime.ensure(case_id)
     board.associate_meeting(ctx, case_id, marker)
-    # Start retries bind the same responsibility; waits and in-flight claims
-    # remain under their event/dispatcher owner rather than executing again.
-    # An absent transport is not authority to construct an ambient native
-    # client. Keep the persisted responsibility ready for the delivery owner.
-    if responsibility.lifecycle_state == READY and feishu_client is not None:
-        try:
-            runtime.run(case_id)
-        except DurableResponsibilityError:
-            # The atomic core claim may have been won after our READY read.
-            # Preserve that persisted identity; real READY failures propagate.
-            current = runtime.existing(case_id)
-            if current is None or current.lifecycle_state == READY:
-                raise
+    from services.core_meeting_continuation_service import CoreMeetingContinuationService
+    owner = CoreMeetingContinuationService(store)
+    owner.bind(ctx, case_id, marker)
+    owner.run(case_id)  # Persist intent/wait only; no ambient external delivery.
     return store.get_negotiation(case_id)
 
 
@@ -3183,7 +3174,11 @@ def submit_negotiation_reply(
     if case_id and selected(store, case_id):
         if core_ingress is None:
             raise PermissionError('selected core case requires verified SDK ingress')
-        return MeetingClarificationDeliveryService(store).accept_verified(core_ingress)
+        owner = MeetingClarificationDeliveryService(store)
+        from services.core_meeting_continuation_service import CONTRACT as GENERAL, CoreMeetingContinuationService
+        if owner.binding(case_id)['contract'] == GENERAL:
+            owner = CoreMeetingContinuationService(store)
+        return owner.accept_verified(core_ingress)
 
     # Fresh core-admitted meetings cannot enter the legacy, caller-asserted
     # participant path. Their broader verified delivery owner is still required.

@@ -4840,6 +4840,75 @@ class MeetingCoordinatorStore:
             payload={"current_round": round_number},
         )
 
+
+    def apply_core_meeting_reply(self, conn, *, negotiation_id, participant_id,
+                                response, event_id, expected_state):
+        """Join an accepted structured answer to the existing meeting domain."""
+        if not hosted.is_postgres(conn) or not hosted.in_transaction(conn):
+            raise ValueError('joined PG meeting reply required')
+        case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s FOR UPDATE',
+                            (negotiation_id,)).fetchone()
+        if case is None or case['status'] != expected_state:
+            raise ValueError('meeting state changed')
+        participant = conn.execute("""SELECT * FROM meeting_time_negotiation_participants
+            WHERE negotiation_id=%s AND attendee_user_id=%s""", (negotiation_id,participant_id)).fetchone()
+        if participant is None:
+            raise PermissionError('meeting participant required')
+        if 'slot' in response:
+            if participant_id != case['declined_attendee_user_id']:
+                raise PermissionError('decliner proposal required')
+            self.apply_core_clarification(conn,negotiation_id=negotiation_id,
+                participant_id=participant_id,round_number=int(case['current_round'])+1,
+                slot=response['slot'],event_id=event_id,input_hash=_hash_id('reply',[event_id]))
+            return
+        if expected_state != 'collecting_votes':
+            raise ValueError('meeting is not collecting votes')
+        candidate = conn.execute("""SELECT * FROM meeting_time_candidate_slots
+            WHERE negotiation_id=%s AND slot_id=%s""",(negotiation_id,response['slot_id'])).fetchone()
+        if candidate is None or candidate['round_number'] != case['current_round']:
+            raise PermissionError('current meeting slot required')
+        vote_id = _hash_id('vote',['meeting_time_vote:v1',negotiation_id,response['slot_id'],participant_id])
+        now = utc_now_iso()
+        conn.execute("""INSERT INTO meeting_time_negotiation_votes
+            (vote_id,negotiation_id,slot_id,attendee_user_id,vote,alternative_slot_id,note,created_at)
+            VALUES(%s,%s,%s,%s,%s,NULL,NULL,%s)""",
+            (vote_id,negotiation_id,response['slot_id'],participant_id,response['vote'],now))
+        conn.execute("""UPDATE meeting_time_negotiation_participants
+            SET latest_response_status=%s,latest_slot_id=%s,last_response_at=%s
+            WHERE negotiation_id=%s AND attendee_user_id=%s""",
+            ('accepted_slot' if response['vote']=='yes' else 'declined_slot',response['slot_id'],now,negotiation_id,participant_id))
+        self._record_negotiation_event(conn,negotiation_id=negotiation_id,event_type='VOTE_RECORDED',
+            actor_type='participant',actor_id=participant_id,
+            payload=dict(slot_id=response['slot_id'],vote=response['vote'],event_id=event_id))
+        required = conn.execute("""SELECT attendee_user_id FROM meeting_time_negotiation_participants
+            WHERE negotiation_id=%s AND required_for_consent=1""",(negotiation_id,)).fetchall()
+        votes = conn.execute("""SELECT attendee_user_id FROM meeting_time_negotiation_votes
+            WHERE negotiation_id=%s AND slot_id=%s AND vote='yes'""",(negotiation_id,response['slot_id'])).fetchall()
+        if required and {p['attendee_user_id'] for p in required} <= {v['attendee_user_id'] for v in votes}:
+            selected = {k:candidate[k] for k in ('slot_id','start_time','end_time','timezone')}
+            conn.execute("""UPDATE meeting_time_negotiations SET status='consented',
+                selected_slot_json=%s,completed_at=%s,terminal_at=%s,terminal_authority='core:meeting',
+                terminal_reason='all required participants consented',terminal_event_revision_id=event_revision_id,
+                updated_at=%s WHERE negotiation_id=%s""",(_json(selected),now,now,now,negotiation_id))
+            self._record_negotiation_event(conn,negotiation_id=negotiation_id,event_type='STATE_TRANSITIONED',
+                actor_type='system',actor_id='core:meeting',prior_state='collecting_votes',
+                next_state='consented',payload=dict(slot_id=response['slot_id']))
+
+    def cancel_core_meeting(self, conn, *, negotiation_id, actor_id):
+        """Domain cancellation, joined to the core delivery revocation."""
+        if not hosted.is_postgres(conn) or not hosted.in_transaction(conn):
+            raise ValueError('joined PG meeting cancellation required')
+        now = utc_now_iso()
+        changed = conn.execute("""UPDATE meeting_time_negotiations SET status='cancelled',
+            terminal_authority=%s,terminal_at=%s,terminal_reason='meeting cancelled',
+            terminal_event_revision_id=event_revision_id,completed_at=%s,updated_at=%s
+            WHERE negotiation_id=%s AND status NOT IN ('consented','requester_decided','cancelled','expired','failed')""",
+            ('user:'+actor_id,now,now,now,negotiation_id))
+        if changed.rowcount != 1:
+            raise ValueError('meeting cancellation state changed')
+        self._record_negotiation_event(conn,negotiation_id=negotiation_id,event_type='STATE_TRANSITIONED',
+            actor_type='user',actor_id=actor_id,next_state='cancelled',payload={})
+
     def cancel_core_clarification(self, conn, *, negotiation_id, actor_id):
         """Join cancellation to core binding revocation; retain prior effect receipts."""
         if not hosted.is_postgres(conn) or not hosted.in_transaction(conn):
