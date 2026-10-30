@@ -357,21 +357,6 @@ def _complete_kanban_if_terminal(
     )
 
 
-def complete_negotiation_kanban_if_terminal(
-    *,
-    negotiation_id: str,
-    store: MeetingCoordinatorStore,
-    kanban: KanbanClient | None = None,
-    summary: str,
-) -> bool:
-    return _complete_kanban_if_terminal(
-        negotiation_id=negotiation_id,
-        store=store,
-        kanban=kanban,
-        summary=summary,
-    )
-
-
 def repair_delivery_retry_scheduler(
     *,
     workspace_id: str,
@@ -1145,37 +1130,6 @@ def _dismiss_monitor_cron(monitor: dict[str, Any], cron: CronClient | None) -> N
         return
     if hasattr(cron, "disable_job"):
         cron.disable_job(cron_job_id)  # type: ignore[attr-defined]
-
-
-def _cleanup_monitor_owned_kanban_tasks(
-    monitor: dict[str, Any],
-    *,
-    store: MeetingCoordinatorStore,
-    kanban: KanbanClient | None,
-    reason: str,
-) -> list[dict[str, Any]]:
-    if str(monitor.get("status") or "") == "negotiating":
-        return []
-    cleaned: list[dict[str, Any]] = []
-    for negotiation in store.list_negotiations_for_monitor(str(monitor["monitor_id"])):
-        task_id = str(negotiation.get("kanban_task_id") or "").strip()
-        if not task_id:
-            continue
-        client = _resolve_kanban_client(kanban)
-        deleted = bool(client.delete(task_id))
-        store.mark_negotiation_kanban_task_cleaned(
-            str(negotiation["negotiation_id"]),
-            kanban_task_id=task_id,
-            reason=reason,
-        )
-        cleaned.append(
-            {
-                "negotiation_id": negotiation["negotiation_id"],
-                "kanban_task_id": task_id,
-                "deleted": deleted,
-            }
-        )
-    return cleaned
 
 
 def _monitor_is_terminal(monitor: dict[str, Any]) -> bool:
