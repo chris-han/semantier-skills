@@ -3179,6 +3179,7 @@ class MeetingCoordinatorStore:
         workflow_binding: dict[str, Any] | None = None,
         runtime_context=None,
         actor_origin=None,
+        admission_request_hash: str | None = None,
     ) -> dict[str, Any]:
         from contracts.workflow_execution import verify_meeting_binding, hash_value
         if runtime_context is not None:
@@ -3197,12 +3198,18 @@ class MeetingCoordinatorStore:
         with self._connect() as conn:
             hosted.begin_write(conn)
             monitor_row = conn.execute(
-                hosted.sql_query("SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?", 'SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=%s'),
+                hosted.sql_query("SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=?", 'SELECT * FROM meeting_rsvp_monitors WHERE monitor_id=%s FOR UPDATE'),
                 (monitor_id,),
             ).fetchone()
             if monitor_row is None:
                 raise KeyError(monitor_id)
             monitor = dict(monitor_row)
+            if hosted.is_postgres(conn):
+                marker = conn.execute('SELECT request_hash FROM meeting_core_admissions WHERE monitor_id=%s AND event_revision_id=%s', (monitor_id, event_revision_id)).fetchone()
+                if marker is not None and marker['request_hash'] != admission_request_hash:
+                    raise PermissionError('meeting admission reserved for another request')
+                if marker is None and admission_request_hash is not None:
+                    raise PermissionError('meeting admission reservation missing')
             if runtime_context is not None and monitor['workspace_id'] != runtime_context.workspace_id:
                 raise ValueError('WORKFLOW_SCOPE_MISMATCH')
             payload = json.loads(str(monitor.get("payload_json") or "{}"))
