@@ -1892,21 +1892,24 @@ class MeetingCoordinatorStore:
                 kanban_run_id=kanban_run_id,
             )
 
-    def decision_planning_basis(self, negotiation_id: str):
+    def decision_planning_basis(self, negotiation_id: str, *, connection=None):
         """Reconstruct proposal inputs from the domain store in one read transaction."""
         from .decision_planning import MeetingDecisionPlanningBasis
-        with self._connect() as conn:
-            conn.execute('BEGIN')
-            row = conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'), (negotiation_id,)).fetchone()
-            if row is None:
-                raise KeyError(negotiation_id)
-            case = dict(row)
-            participants = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? ORDER BY attendee_user_id', 'SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=%s ORDER BY attendee_user_id'), (negotiation_id,))]
-            slots = [dict(r) for r in conn.execute(hosted.sql_query("SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=? AND status!='superseded' ORDER BY slot_id", "SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=%s AND status!='superseded' ORDER BY slot_id"), (negotiation_id,))]
-            votes = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=? ORDER BY created_at, vote_id', 'SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=%s ORDER BY created_at, vote_id'), (negotiation_id,))]
-            rsvps = {r['attendee_user_id']: r['response_status'] for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=?', 'SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=%s'), (case['monitor_id'],))}
-            events = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', 'SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=%s ORDER BY event_sequence'), (negotiation_id,))]
-            settings = conn.execute(hosted.sql_query('SELECT max_followups FROM meeting_rsvp_workspace_state WHERE workspace_id=?', 'SELECT max_followups FROM meeting_rsvp_workspace_state WHERE workspace_id=%s'), (case['workspace_id'],)).fetchone()
+        if connection is None:
+            with self._connect() as conn:
+                conn.execute('BEGIN')
+                return self.decision_planning_basis(negotiation_id, connection=conn)
+        conn = connection
+        row = conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?', 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'), (negotiation_id,)).fetchone()
+        if row is None:
+            raise KeyError(negotiation_id)
+        case = dict(row)
+        participants = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=? ORDER BY attendee_user_id', 'SELECT * FROM meeting_time_negotiation_participants WHERE negotiation_id=%s ORDER BY attendee_user_id'), (negotiation_id,))]
+        slots = [dict(r) for r in conn.execute(hosted.sql_query("SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=? AND status!='superseded' ORDER BY slot_id", "SELECT * FROM meeting_time_candidate_slots WHERE negotiation_id=%s AND status!='superseded' ORDER BY slot_id"), (negotiation_id,))]
+        votes = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=? ORDER BY created_at, vote_id', 'SELECT * FROM meeting_time_negotiation_votes WHERE negotiation_id=%s ORDER BY created_at, vote_id'), (negotiation_id,))]
+        rsvps = {r['attendee_user_id']: r['response_status'] for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=?', 'SELECT * FROM meeting_rsvp_attendees WHERE monitor_id=%s'), (case['monitor_id'],))}
+        events = [dict(r) for r in conn.execute(hosted.sql_query('SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=? ORDER BY event_sequence', 'SELECT * FROM meeting_time_negotiation_events WHERE negotiation_id=%s ORDER BY event_sequence'), (negotiation_id,))]
+        settings = conn.execute(hosted.sql_query('SELECT max_followups FROM meeting_rsvp_workspace_state WHERE workspace_id=?', 'SELECT max_followups FROM meeting_rsvp_workspace_state WHERE workspace_id=%s'), (case['workspace_id'],)).fetchone()
         states = {}
         for p in participants:
             states['original', p['attendee_user_id']] = {'accepted': 'AVAILABLE', 'declined': 'UNAVAILABLE'}.get(rsvps.get(p['attendee_user_id']), 'UNKNOWN')
@@ -4845,6 +4848,34 @@ class MeetingCoordinatorStore:
             payload={"current_round": round_number},
         )
 
+
+    def present_core_decision_frontier(self, conn, *, negotiation_id, expected_input_hash):
+        """Publish the current planner frontier within the caller's fenced transaction."""
+        if not hosted.is_postgres(conn) or not hosted.in_transaction(conn):
+            raise ValueError('joined PG frontier transaction required')
+        case = conn.execute('SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s FOR UPDATE',
+                            (negotiation_id,)).fetchone()
+        if case is None or case['status'] != 'collecting_votes':
+            raise ValueError('meeting state changed')
+        conn.execute('SELECT 1 FROM meeting_rsvp_attendees WHERE monitor_id=%s FOR UPDATE', (case['monitor_id'],)).fetchall()
+        conn.execute('SELECT 1 FROM meeting_time_negotiation_participants WHERE negotiation_id=%s FOR UPDATE', (negotiation_id,)).fetchall()
+        conn.execute('SELECT 1 FROM meeting_time_candidate_slots WHERE negotiation_id=%s FOR UPDATE', (negotiation_id,)).fetchall()
+        conn.execute('SELECT 1 FROM meeting_time_negotiation_votes WHERE negotiation_id=%s FOR UPDATE', (negotiation_id,)).fetchall()
+        from .decision_planning import form_decision_frontier
+        frontier = form_decision_frontier(self.decision_planning_basis(negotiation_id, connection=conn))
+        if (frontier.input_hash != expected_input_hash or not frontier.decision_frontier
+            or frontier.sufficient_progress_disposition != 'PRESENT_FRONTIER'):
+            raise ValueError('meeting planner basis changed')
+        self._record_negotiation_event(conn, negotiation_id=negotiation_id,
+            event_type='DECISION_FRONTIER_PRESENTED', actor_type='system', actor_id='core:meeting',
+            payload={'planner_version':frontier.planner_version, 'input_hash':frontier.input_hash,
+                     'event_revision_id':frontier.event_revision_id,
+                     'decision_frontier':[item.option_id for item in frontier.decision_frontier]})
+        conn.execute("UPDATE meeting_time_negotiations SET status='awaiting_requester_decision',updated_at=%s WHERE negotiation_id=%s AND status='collecting_votes'",
+                     (utc_now_iso(), negotiation_id))
+        self._record_negotiation_event(conn, negotiation_id=negotiation_id,
+            event_type='STATE_TRANSITIONED', actor_type='system', actor_id='core:meeting',
+            prior_state='collecting_votes', next_state='awaiting_requester_decision', payload={})
 
     def apply_core_meeting_reply(self, conn, *, negotiation_id, participant_id,
                                 response, event_id, expected_state):
