@@ -1522,7 +1522,7 @@ def _run_negotiation_case_tick(
         "terminal": False,
         "worked": True,
         "prompt_sent": bool(provider_message_id),
-        "delivery_state": "confirmed" if provider_message_id else "unknown",
+        "delivery_state": "accepted" if provider_message_id else "unknown",
         "message_event_id": reserved["message"]["message_event_id"],
         "provider_message_id": provider_message_id,
     }
