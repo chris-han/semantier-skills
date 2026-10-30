@@ -457,21 +457,7 @@ class _DefaultGateway:
         )
 
     def negotiation_case_submit_reply(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        store = meeting_coordinator_store.MeetingCoordinatorStore()
-        from services.meeting_clarification_delivery_service import selected
-        if selected(store, _text(payload.get('negotiation_id'))):
-            raise PermissionError('verified meeting reply required')
-        reply_payload = dict(payload)
-        if reply_payload.get("start_time") and reply_payload.get("end_time"):
-            _normalize_temporal_window_payload(reply_payload)
-        return meeting_coordinator_gateway.negotiation_case_submit_reply(
-            reply_payload,
-            store=store,
-            kanban=meeting_coordinator_gateway._resolve_kanban_client(None),
-            cron=self._cron(),
-        )
+        raise PermissionError('verified meeting reply required')
 
     def negotiation_case_finalize(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
@@ -485,7 +471,7 @@ class _DefaultGateway:
         )
 
     def negotiation_requester_decision(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
+        _, meeting_coordinator_store = _meeting_modules()
         store = meeting_coordinator_store.MeetingCoordinatorStore()
         from services.meeting_clarification_delivery_service import selected
         case_id = _text(payload.get('negotiation_id'))
@@ -498,12 +484,7 @@ class _DefaultGateway:
             return CoreMeetingContinuationService(store).requester_decision(
                 meeting_context_from_execution_boundary(), case_id, aliases.get(action, action),
                 slot_id=_text(payload.get('slot_id') or payload.get('selected_slot_id')) or None)
-        return meeting_coordinator_gateway.apply_requester_decision(
-            payload,
-            store=store,
-            cron=self._cron(),
-            kanban=meeting_coordinator_gateway._resolve_kanban_client(None),
-        )
+        raise PermissionError('core meeting required')
 
     def negotiation_case_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
         _, meeting_coordinator_store = _meeting_modules()
@@ -519,18 +500,7 @@ class _DefaultGateway:
                 owner = CoreMeetingContinuationService(store)
             owner.cancel(meeting_context_from_execution_boundary(), negotiation_id)
             return store.get_negotiation(negotiation_id)
-        owner = f"operator:{_text(payload.get('operator_user_id')) or 'unknown'}"
-        negotiation = store.get_negotiation(negotiation_id)
-        result = store.transition_negotiation_state(
-            negotiation_id,
-            expected_state=str(negotiation["status"]),
-            next_state="cancelled",
-            patch={},
-            actor_id=owner,
-        )
-        if not result["ok"]:
-            raise RuntimeError(str(result["reason"]))
-        return result["record"]
+        raise PermissionError('core meeting required')
 
     def negotiation_resume(self, payload: dict[str, Any]) -> dict[str, Any]:
         _, meeting_coordinator_store = _meeting_modules()
