@@ -56,6 +56,8 @@ class MeetingCoordinatorWebApiCronClient:
         return resolved
 
     def _ensure_no_agent_script(self, *, profile: str, script: str, name: str) -> None:
+        if os.environ.get("SEMANTIER_PUBLIC_RUN_ID") and name.startswith("meeting-rsvp-delivery-retry:"):
+            raise RuntimeError("Legacy escalation retry is retired for public tasks")
         workspace_home = Path(self.ctx.hermes_home).expanduser().resolve()
         profile_home = workspace_home / "profiles" / profile
         scripts_dir = profile_home / "scripts"

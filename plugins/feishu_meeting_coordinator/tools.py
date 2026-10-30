@@ -96,6 +96,8 @@ class _LocalCronClient:
         return resolved
 
     def _ensure_no_agent_script(self, *, profile: str, script: str, name: str) -> None:
+        if os.environ.get("SEMANTIER_PUBLIC_RUN_ID") and name.startswith("meeting-rsvp-delivery-retry:"):
+            raise RuntimeError("Legacy escalation retry is retired for public tasks")
         # Hermes cron resolves scripts against the bound workspace home.
         # Named profiles do not belong to the current create_job wire contract.
         scripts_dir = self.hermes_home / "scripts"

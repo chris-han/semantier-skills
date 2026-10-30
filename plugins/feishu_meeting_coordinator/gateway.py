@@ -236,7 +236,13 @@ def start_monitor(
     raise RuntimeError("legacy RSVP monitor cron lifecycle is retired in v3")
 
 
+def _require_legacy_escalation_retry() -> None:
+    if os.environ.get("SEMANTIER_PUBLIC_RUN_ID"):
+        raise RuntimeError("Legacy escalation retry is retired for public tasks")
+
+
 def ensure_delivery_retry_cron(*, workspace_id: str, cron: CronClient) -> str:
+    _require_legacy_escalation_retry()
     return cron.ensure_job(
         name=f"meeting-rsvp-delivery-retry:{workspace_id}",
         schedule="every 2m",
@@ -407,6 +413,7 @@ def repair_delivery_retry_scheduler(
     store: MeetingCoordinatorStore,
     cron: CronClient,
 ) -> bool:
+    _require_legacy_escalation_retry()
     non_terminal_tasks = store.list_non_terminal_delivery_tasks(
         workspace_id=workspace_id,
         limit=1,
@@ -434,6 +441,7 @@ def create_creator_escalation_task(
     message: str | None = None,
     ensure_retry_cron: bool = True,
 ) -> dict[str, Any]:
+    _require_legacy_escalation_retry()
     monitor = store.get_monitor(monitor_id)
     binding = json.loads(monitor["creator_delivery_binding_json"])
     task = store.create_delivery_task(
@@ -465,6 +473,7 @@ def requeue_delivery_task(
     store: MeetingCoordinatorStore,
     cron: CronClient,
 ) -> dict[str, Any]:
+    _require_legacy_escalation_retry()
     task = store.requeue_delivery_task(delivery_task_id, reason=reason)
     try:
         ensure_delivery_retry_cron(workspace_id=task["workspace_id"], cron=cron)
@@ -4025,6 +4034,7 @@ def escalation_retry_tick(
     store: MeetingCoordinatorStore,
     delivery_client: Any,
 ) -> dict[str, Any]:
+    _require_legacy_escalation_retry()
     workspace_id = str(payload["workspace_id"])
     due_tasks = store.list_due_delivery_tasks(
         workspace_id=workspace_id,
