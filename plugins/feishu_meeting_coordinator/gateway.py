@@ -1390,6 +1390,7 @@ def _run_negotiation_case_tick(
             }
         participants = store.list_negotiation_participants(negotiation_id)
         prompts_sent = 0
+        delivery_unknown = 0
         deduped = 0
         eligible = {(a.target_ref, a.slot_id) for a in frontier.information_actions
                     if a.action == 'ASK' and a.expected_frontier_impact == 'MATERIAL'}
@@ -1428,15 +1429,18 @@ def _run_negotiation_case_tick(
                         message_event_id=reserved["message"]["message_event_id"],
                         provider_message_id=provider_message_id,
                     )
-                store.update_negotiation_participant_response(
-                    negotiation_id=negotiation_id,
-                    attendee_user_id=attendee_id,
-                    latest_response_status="asked",
-                    latest_slot_id=str(slot["slot_id"]),
-                    contacted=True,
-                    responded=False,
-                )
-                prompts_sent += 1
+                if provider_message_id:
+                    store.update_negotiation_participant_response(
+                        negotiation_id=negotiation_id,
+                        attendee_user_id=attendee_id,
+                        latest_response_status="asked",
+                        latest_slot_id=str(slot["slot_id"]),
+                        contacted=True,
+                        responded=False,
+                    )
+                    prompts_sent += 1
+                else:
+                    delivery_unknown += 1
         if frontier.decision_frontier and frontier.sufficient_progress_disposition == 'PRESENT_FRONTIER':
             store.record_negotiation_event(negotiation_id=negotiation_id,
                 event_type='DECISION_FRONTIER_PRESENTED', actor_type='agent', actor_id='scheduling_agent',
@@ -1452,6 +1456,7 @@ def _run_negotiation_case_tick(
             "terminal": False,
             "worked": True,
             "vote_prompts_sent": prompts_sent,
+            "vote_prompts_unknown": delivery_unknown,
             "vote_prompts_deduplicated": deduped,
         }
 
@@ -1516,7 +1521,8 @@ def _run_negotiation_case_tick(
         "status": negotiation["status"],
         "terminal": False,
         "worked": True,
-        "prompt_sent": True,
+        "prompt_sent": bool(provider_message_id),
+        "delivery_state": "confirmed" if provider_message_id else "unknown",
         "message_event_id": reserved["message"]["message_event_id"],
         "provider_message_id": provider_message_id,
     }
