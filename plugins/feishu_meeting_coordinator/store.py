@@ -1906,6 +1906,10 @@ class MeetingCoordinatorStore:
         states = {}
         for p in participants:
             states['original', p['attendee_user_id']] = {'accepted': 'AVAILABLE', 'declined': 'UNAVAILABLE'}.get(rsvps.get(p['attendee_user_id']), 'UNKNOWN')
+        for event in events:
+            if event['event_type'] == 'ORIGINAL_AVAILABILITY_RECORDED':
+                fact = json.loads(event['payload_json'])
+                states['original', fact['participant_id']] = fact['availability']
         for slot in slots:
             states[slot['slot_id'], slot['proposed_by_user_id']] = 'AVAILABLE'
         for vote in votes:
@@ -4863,6 +4867,14 @@ class MeetingCoordinatorStore:
             return
         if expected_state != 'collecting_votes':
             raise ValueError('meeting is not collecting votes')
+        if response.get('slot_id') == 'original':
+            if response.get('availability') not in ('available', 'unavailable'):
+                raise ValueError('original availability required')
+            self._record_negotiation_event(conn, negotiation_id=negotiation_id,
+                event_type='ORIGINAL_AVAILABILITY_RECORDED', actor_type='participant',
+                actor_id=participant_id, payload=dict(participant_id=participant_id,
+                    availability=response['availability'].upper(), event_id=event_id))
+            return
         candidate = conn.execute("""SELECT * FROM meeting_time_candidate_slots
             WHERE negotiation_id=%s AND slot_id=%s""",(negotiation_id,response['slot_id'])).fetchone()
         if candidate is None or candidate['round_number'] != case['current_round']:
@@ -4884,7 +4896,8 @@ class MeetingCoordinatorStore:
             WHERE negotiation_id=%s AND required_for_consent=1""",(negotiation_id,)).fetchall()
         votes = conn.execute("""SELECT attendee_user_id FROM meeting_time_negotiation_votes
             WHERE negotiation_id=%s AND slot_id=%s AND vote='yes'""",(negotiation_id,response['slot_id'])).fetchall()
-        if required and {p['attendee_user_id'] for p in required} <= {v['attendee_user_id'] for v in votes}:
+        yes_ids = {v['attendee_user_id'] for v in votes} | {candidate['proposed_by_user_id']}
+        if required and {p['attendee_user_id'] for p in required} <= yes_ids:
             selected = {k:candidate[k] for k in ('slot_id','start_time','end_time','timezone')}
             conn.execute("""UPDATE meeting_time_negotiations SET status='consented',
                 selected_slot_json=%s,completed_at=%s,terminal_at=%s,terminal_authority='core:meeting',
