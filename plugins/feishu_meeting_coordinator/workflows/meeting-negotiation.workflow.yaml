@@ -1,6 +1,6 @@
 schema_version: workflow_definition.v1
 workflow_id: feishu-meeting-coordinator
-workflow_version: "2"
+workflow_version: "3"
 owner_ref: skill:feishu_meeting_coordinator
 topology: dag
 

@@ -114,7 +114,11 @@ def _store_path_for_context(ctx) -> Path:
 
 
 def store_for_context(ctx) -> "MeetingCoordinatorStore":
-    return MeetingCoordinatorStore(_store_path_for_context(ctx))
+    workspace_path = _store_path_for_context(ctx)
+    if os.environ.get('SEMANTIER_RUNTIME_MODE') == 'tasks':
+        from agents.task_bootstrap import configure
+        return MeetingCoordinatorStore(configure() / 'state.db')
+    return MeetingCoordinatorStore(workspace_path)
 
 
 def store_for_workspace(workspace_id: str) -> "MeetingCoordinatorStore":

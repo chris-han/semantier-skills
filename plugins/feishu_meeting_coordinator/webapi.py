@@ -463,11 +463,17 @@ async def system_meeting_coordinator_negotiation_run(
         ) from exc
     _require_negotiation_operator(negotiation_record, user_id=ctx.user_id)
     try:
-        negotiation = meeting_coordinator_gateway.ensure_negotiation_kanban_task(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=None,
-        )
+        from services.core_meeting_board_service import CoreMeetingBoardService
+        from services.core_meeting_continuation_service import CONTRACT, CoreMeetingContinuationService
+        from services.meeting_clarification_delivery_service import MeetingClarificationDeliveryService
+        CoreMeetingBoardService(store).get(ctx, negotiation_id)
+        owner = MeetingClarificationDeliveryService(store)
+        binding = owner.binding(negotiation_id)
+        if binding['contract'] == CONTRACT:
+            CoreMeetingContinuationService(store).run(negotiation_id)
+        else:
+            owner._ensure_wait(binding)
+        negotiation = store.get_negotiation(negotiation_id)
     except Exception as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True, "negotiation": negotiation}
@@ -650,23 +656,20 @@ async def system_meeting_coordinator_negotiation_cancel(
             status_code=404, detail="not_found_or_wrong_workspace"
         ) from exc
     _require_negotiation_operator(negotiation_record, user_id=ctx.user_id)
-    owner = f"operator:{ctx.user_id or 'unknown'}"
-    result = store.transition_negotiation_state(
-        negotiation_id,
-        expected_state=str(negotiation_record["status"]),
-        next_state="cancelled",
-        patch={},
-        actor_id=owner,
-    )
-    if not result["ok"]:
-        raise HTTPException(status_code=409, detail=str(result["reason"]))
-    meeting_coordinator_gateway.complete_negotiation_kanban_if_terminal(
-        negotiation_id=negotiation_id,
-        store=store,
-        kanban=None,
-        summary="Operator cancelled the meeting time negotiation.",
-    )
-    return {"ok": True, "negotiation": result["record"]}
+    from services.core_meeting_board_service import CoreMeetingBoardService
+    from services.core_meeting_continuation_service import CONTRACT, CoreMeetingContinuationService
+    from services.meeting_clarification_delivery_service import MeetingClarificationDeliveryService
+    try:
+        CoreMeetingBoardService(store).get(ctx, negotiation_id)
+        owner = MeetingClarificationDeliveryService(store)
+        if owner.binding(negotiation_id)['contract'] == CONTRACT:
+            owner = CoreMeetingContinuationService(store)
+        owner.cancel(ctx, negotiation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="not_found_or_wrong_workspace") from exc
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "negotiation": store.get_negotiation(negotiation_id)}
 
 
 @router.post(

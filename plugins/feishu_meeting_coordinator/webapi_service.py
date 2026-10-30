@@ -8,14 +8,6 @@ from typing import Any
 
 from agents.auth_session import RequestContext
 from agents.gateway_identity import read_workspace_feishu_bot_config
-from agents.webapi.job_service import (
-    _create_workspace_cron_job,
-    _delete_workspace_cron_job,
-    _get_workspace_cron_job,
-    _list_workspace_cron_jobs,
-    _temporary_hermes_home,
-    _update_workspace_cron_job,
-)
 import importlib.util
 import sys
 import yaml
@@ -180,6 +172,7 @@ class MeetingCoordinatorWebApiCronClient:
         provider: str | None = None,
         base_url: str | None = None,
     ) -> str:
+        from agents.webapi.job_service import _create_workspace_cron_job, _list_workspace_cron_jobs, _update_workspace_cron_job
         resolved_skills = self._workspace_skill_refs(skills)
         if no_agent:
             if not script:
@@ -246,15 +239,19 @@ class MeetingCoordinatorWebApiCronClient:
         return str(job["id"])
 
     def job_exists(self, cron_job_id: str) -> bool:
+        from agents.webapi.job_service import _get_workspace_cron_job
         return _get_workspace_cron_job(self.ctx, cron_job_id) is not None
 
     def get_job(self, cron_job_id: str) -> dict[str, Any] | None:
+        from agents.webapi.job_service import _get_workspace_cron_job
         return _get_workspace_cron_job(self.ctx, cron_job_id)
 
     def disable_job(self, cron_job_id: str) -> None:
+        from agents.webapi.job_service import _update_workspace_cron_job
         _update_workspace_cron_job(self.ctx, cron_job_id, {"enabled": False})
 
     def delete_job(self, cron_job_id: str) -> bool:
+        from agents.webapi.job_service import _delete_workspace_cron_job
         return _delete_workspace_cron_job(self.ctx, cron_job_id)
 
 
@@ -270,6 +267,7 @@ class MeetingCoordinatorWebApiDeliveryClient:
         _hydrate_saved_feishu_gateway_env()
 
     def send_creator_escalation(self, task: dict[str, Any]) -> dict[str, Any]:
+        from agents.webapi.job_service import _temporary_hermes_home
         delivery_binding = json.loads(str(task.get("delivery_binding_json") or "{}"))
         payload = json.loads(str(task.get("payload_json") or "{}"))
         platform = str(delivery_binding.get("platform") or "feishu").strip()
@@ -341,6 +339,7 @@ class MeetingCoordinatorWebApiCalendarClient:
         end_time: str,
         timezone: str,
     ) -> dict[str, Any]:
+        from agents.webapi.job_service import _temporary_hermes_home
         with _temporary_hermes_home(str(self.ctx.hermes_home)):
             self._bind_runtime_identity()
             return self._helper().update_meeting_time(
