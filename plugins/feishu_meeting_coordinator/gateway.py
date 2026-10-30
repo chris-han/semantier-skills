@@ -2090,10 +2090,15 @@ def negotiation_case_start(
         raise ValueError('WORKFLOW_SCOPE_MISMATCH')
     if monitor['creator_user_id'] != ctx.user_id:
         raise PermissionError('WORKFLOW_ACTOR_IDENTITY_MISMATCH')
-    # A retried existing instance keeps its original immutable pins. The store
-    # resolves identity first; an ACTIVE successor never rebinds this instance.
-    existing = store.list_negotiations_for_monitor(_text(payload.get('monitor_id')))
-    existing = next((case for case in existing if case['event_revision_id'] == _text(payload.get('event_revision_id'))), None)
+    # Only a fresh server-owned admission can create or repair this association.
+    from services.core_meeting_board_service import CoreMeetingBoardService
+    board = CoreMeetingBoardService(store)
+    monitor_id = _text(payload.get('monitor_id'))
+    revision_id = _text(payload.get('event_revision_id'))
+    participant_id = _text(payload.get('trigger_attendee_user_id'))
+    marker = board.reserve_meeting(ctx, monitor_id=monitor_id, revision_id=revision_id, participant_id=participant_id)
+    existing = store.list_negotiations_for_monitor(monitor_id)
+    existing = next((case for case in existing if case['event_revision_id'] == revision_id), None)
     if existing is not None:
         if not existing.get('workflow_binding_json'):
             raise ValueError('WORKFLOW_LEGACY_INSTANCE_UNBOUND')
@@ -2101,23 +2106,18 @@ def negotiation_case_start(
             raise ValueError('WORKFLOW_SCOPE_MISMATCH')
         binding = json.loads(existing['workflow_binding_json'])
     else:
-        # Body-provided scope, pins and success/simulation claims are not read.
         binding = read_active_meeting_binding(ctx)
-    from agents.meeting_api_origin import prospective_meeting_origin
-    actor_origin = prospective_meeting_origin(ctx,binding)
+    # An explicit core RequestContext needs no native session origin.
+    if runtime_context is None:
+        from agents.meeting_api_origin import prospective_meeting_origin
+        actor_origin = prospective_meeting_origin(ctx,binding)
+    else:
+        actor_origin = None
     negotiation = store.create_or_get_negotiation_case(
-        monitor_id=_text(payload.get('monitor_id')),
-        event_revision_id=_text(payload.get('event_revision_id')),
-        trigger_attendee_user_id=_text(payload.get('trigger_attendee_user_id')),
-        session_id=_text(payload.get('session_id')) or None,
-        workflow_binding=binding,
-        runtime_context=ctx,
-        actor_origin=actor_origin,
+        monitor_id=monitor_id, event_revision_id=revision_id,
+        trigger_attendee_user_id=participant_id, workflow_binding=binding,
+        runtime_context=ctx, actor_origin=actor_origin, admission_request_hash=marker,
     )
-    if payload.get('ensure_kanban') is not False:
-        ensure_negotiation_kanban_task(
-            negotiation_id=str(negotiation['negotiation_id']), store=store, kanban=kanban,
-        )
 
     from .durable_runtime import MeetingResponsibilityRuntime
 
@@ -2131,6 +2131,7 @@ def negotiation_case_start(
     )
     case_id = str(negotiation['negotiation_id'])
     responsibility = runtime.ensure(case_id)
+    board.associate_meeting(ctx, case_id, marker)
     # Start retries bind the same responsibility; waits and in-flight claims
     # remain under their event/dispatcher owner rather than executing again.
     if responsibility.lifecycle_state == READY:
