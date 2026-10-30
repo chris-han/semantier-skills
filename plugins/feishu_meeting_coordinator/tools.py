@@ -505,6 +505,15 @@ class _DefaultGateway:
 
         store = meeting_coordinator_store.MeetingCoordinatorStore()
         negotiation_id = _text(payload.get("negotiation_id"))
+        from services.meeting_clarification_delivery_service import selected, MeetingClarificationDeliveryService
+        if selected(store, negotiation_id):
+            from contracts.workflow_execution import meeting_context_from_execution_boundary
+            from services.core_meeting_continuation_service import CONTRACT, CoreMeetingContinuationService
+            owner = MeetingClarificationDeliveryService(store)
+            if owner.binding(negotiation_id)['contract'] == CONTRACT:
+                owner = CoreMeetingContinuationService(store)
+            owner.cancel(meeting_context_from_execution_boundary(), negotiation_id)
+            return store.get_negotiation(negotiation_id)
         owner = f"operator:{_text(payload.get('operator_user_id')) or 'unknown'}"
         negotiation = store.get_negotiation(negotiation_id)
         result = store.transition_negotiation_state(
