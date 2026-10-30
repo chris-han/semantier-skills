@@ -705,15 +705,16 @@ async def plugins_meeting_coordinator_negotiation_requester_decision(
             status_code=400, detail="selected_slot_id is required for requester_select_slot"
         )
     try:
-        result = meeting_coordinator_gateway.apply_requester_decision(
-            {
-                **body,
-                "negotiation_id": negotiation_id,
-                "requested_by_user_id": str(ctx.user_id or ""),
-            },
-            store=store,
-            cron=MeetingCoordinatorWebApiCronClient(ctx),
+        from services.core_meeting_board_service import CoreMeetingBoardService
+        from services.core_meeting_continuation_service import CoreMeetingContinuationService
+        CoreMeetingBoardService(store).get(ctx, negotiation_id)
+        aliases = {"keep_original": "requester_keep_original", "requester_select_time": "requester_select_slot", "select_slot": "requester_select_slot"}
+        result = CoreMeetingContinuationService(store).requester_decision(
+            ctx, negotiation_id, aliases.get(action, action),
+            slot_id=str(body.get("slot_id") or body.get("selected_slot_id") or "").strip() or None,
         )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="not_found_or_wrong_workspace") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PermissionError as exc:

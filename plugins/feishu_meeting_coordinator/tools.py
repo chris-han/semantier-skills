@@ -460,6 +460,9 @@ class _DefaultGateway:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
 
         store = meeting_coordinator_store.MeetingCoordinatorStore()
+        from services.meeting_clarification_delivery_service import selected
+        if selected(store, _text(payload.get('negotiation_id'))):
+            raise PermissionError('verified meeting reply required')
         reply_payload = dict(payload)
         if reply_payload.get("start_time") and reply_payload.get("end_time"):
             _normalize_temporal_window_payload(reply_payload)
@@ -483,10 +486,21 @@ class _DefaultGateway:
 
     def negotiation_requester_decision(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
+        store = meeting_coordinator_store.MeetingCoordinatorStore()
+        from services.meeting_clarification_delivery_service import selected
+        case_id = _text(payload.get('negotiation_id'))
+        if selected(store, case_id):
+            from contracts.workflow_execution import meeting_context_from_execution_boundary
+            from services.core_meeting_continuation_service import CoreMeetingContinuationService
+            action = _text(payload.get('action'))
+            aliases = {'keep_original':'requester_keep_original', 'select_slot':'requester_select_slot',
+                       'requester_select_time':'requester_select_slot'}
+            return CoreMeetingContinuationService(store).requester_decision(
+                meeting_context_from_execution_boundary(), case_id, aliases.get(action, action),
+                slot_id=_text(payload.get('slot_id') or payload.get('selected_slot_id')) or None)
         return meeting_coordinator_gateway.apply_requester_decision(
             payload,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
+            store=store,
             cron=self._cron(),
             kanban=meeting_coordinator_gateway._resolve_kanban_client(None),
         )
