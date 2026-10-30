@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 from .cli import command, register_cli
 from .tools import (
@@ -781,20 +782,21 @@ def register(ctx) -> None:
         schema=_function_schema("feishu_meeting_negotiation_case_stop"),
         toolset="meeting-coordinator",
     )
-    ctx.register_tool(
-        name="feishu_meeting_escalation_retry_tick",
-        handler=feishu_meeting_escalation_retry_tick,
-        description="Retry pending creator escalation delivery tasks.",
-        schema=_function_schema("feishu_meeting_escalation_retry_tick"),
-        toolset="meeting-coordinator",
-    )
-    ctx.register_tool(
-        name="feishu_meeting_delivery_task_requeue",
-        handler=feishu_meeting_delivery_task_requeue,
-        description="Requeue a failed creator escalation delivery task and heal the retry cron.",
-        schema=_function_schema("feishu_meeting_delivery_task_requeue"),
-        toolset="meeting-coordinator",
-    )
+    if not os.environ.get("SEMANTIER_PUBLIC_RUN_ID"):
+        ctx.register_tool(
+            name="feishu_meeting_escalation_retry_tick",
+            handler=feishu_meeting_escalation_retry_tick,
+            description="Retry pending creator escalation delivery tasks.",
+            schema=_function_schema("feishu_meeting_escalation_retry_tick"),
+            toolset="meeting-coordinator",
+        )
+        ctx.register_tool(
+            name="feishu_meeting_delivery_task_requeue",
+            handler=feishu_meeting_delivery_task_requeue,
+            description="Requeue a failed creator escalation delivery task and heal the retry cron.",
+            schema=_function_schema("feishu_meeting_delivery_task_requeue"),
+            toolset="meeting-coordinator",
+        )
     ctx.register_cli_command(
         name="feishu-meeting-coordinator",
         help="Inspect and operate Feishu meeting coordination tasks",

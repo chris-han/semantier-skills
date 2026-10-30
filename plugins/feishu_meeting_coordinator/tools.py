@@ -1522,6 +1522,8 @@ def feishu_meeting_negotiation_case_stop(args, **kwargs):
 
 
 def feishu_meeting_escalation_retry_tick(args, **kwargs):
+    if os.environ.get("SEMANTIER_PUBLIC_RUN_ID"):
+        return _error("Legacy escalation retry is retired for public tasks")
     try:
         result = _gateway(kwargs).escalation_retry_tick(dict(args or {}))
     except Exception as exc:
@@ -1530,6 +1532,8 @@ def feishu_meeting_escalation_retry_tick(args, **kwargs):
 
 
 def feishu_meeting_delivery_task_requeue(args, **kwargs):
+    if os.environ.get("SEMANTIER_PUBLIC_RUN_ID"):
+        return _error("Legacy escalation requeue is retired for public tasks")
     payload = dict(args or {})
     delivery_task_id = str(payload.get("delivery_task_id") or "").strip()
     reason = str(payload.get("reason") or "operator requested requeue").strip()
