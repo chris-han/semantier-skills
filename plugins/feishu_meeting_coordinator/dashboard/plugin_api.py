@@ -107,7 +107,6 @@ def _operation_record(record: dict[str, Any], store: Any | None = None) -> dict[
         **record,
         "task_type": TASK_TYPE,
         "metadata": metadata,
-        "kanban_deep_link": "/kanban",
     }
 
 
@@ -192,15 +191,6 @@ def negotiation_detail(
         "finalize_attempts": active_store.list_finalize_attempts(negotiation_id),
         "events": active_store.list_negotiation_events(negotiation_id),
     }
-
-
-def nudge_unblock(*, negotiation_id: str, store: Any, kanban: Any) -> dict[str, Any]:
-    negotiation = store.get_negotiation(negotiation_id)
-    task_id = str(negotiation.get("kanban_task_id") or "").strip()
-    if not task_id:
-        raise ValueError("negotiation has no linked Kanban task")
-    unblocked = bool(kanban.unblock(task_id))
-    return {"negotiation_id": negotiation_id, "kanban_task_id": task_id, "unblocked": unblocked}
 
 
 def finalize(*, payload: dict[str, Any], store: Any, calendar_client: Any, cron: Any = None) -> dict[str, Any]:
