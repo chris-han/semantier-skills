@@ -3606,57 +3606,54 @@ class MeetingCoordinatorStore:
                 if "terminal_event_revision_id" not in patch:
                     assignments.append(hosted.sql_query("terminal_event_revision_id=COALESCE(terminal_event_revision_id, ?)", 'terminal_event_revision_id=COALESCE(terminal_event_revision_id, %s)'))
                     values.append(current_record["event_revision_id"])
-        for key, value in patch.items():
-            assignments.append(hosted.sql_query(f"{key}=?", f'{key}=%s'))
-            values.append(
-                _json(value)
-                if key.endswith("_json") and not isinstance(value, str)
-                else value
+            for key, value in patch.items():
+                assignments.append(hosted.sql_query(f"{key}=?", f'{key}=%s'))
+                values.append(
+                    _json(value)
+                    if key.endswith("_json") and not isinstance(value, str)
+                    else value
+                )
+            if next_state in TERMINAL_NEGOTIATION_STATUSES and "completed_at" not in patch:
+                assignments.append(hosted.sql_query("completed_at=COALESCE(completed_at, ?)", 'completed_at=COALESCE(completed_at, %s)'))
+                values.append(now)
+            values.extend([negotiation_id, expected_state])
+            cursor = conn.execute(
+                hosted.sql_query(f"""
+                UPDATE meeting_time_negotiations
+                SET {", ".join(assignments)}
+                WHERE negotiation_id=?
+                  AND status=?
+                """, f"\n            UPDATE meeting_time_negotiations\n            SET {', '.join(assignments)}\n            WHERE negotiation_id=%s\n              AND status=%s\n            "),
+                values,
             )
-        if next_state in TERMINAL_NEGOTIATION_STATUSES and "completed_at" not in patch:
-            assignments.append(hosted.sql_query("completed_at=COALESCE(completed_at, ?)", 'completed_at=COALESCE(completed_at, %s)'))
-            values.append(now)
-        values.extend([negotiation_id, expected_state])
-        cursor = conn.execute(
-            hosted.sql_query(f"""
-            UPDATE meeting_time_negotiations
-            SET {", ".join(assignments)}
-            WHERE negotiation_id=?
-              AND status=?
-            """, f"\n            UPDATE meeting_time_negotiations\n            SET {', '.join(assignments)}\n            WHERE negotiation_id=%s\n              AND status=%s\n            "),
-            values,
-        )
-        if int(cursor.rowcount or 0) != 1:
-            row = conn.execute(
-                hosted.sql_query("SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT status FROM meeting_time_negotiations WHERE negotiation_id=%s'),
-                (negotiation_id,),
-            ).fetchone()
-            if row is None:
-                conn.close()
-                raise KeyError(negotiation_id)
-            conn.close()
-            return {"ok": False, "reason": "state_conflict"}
-        record = dict(
-            conn.execute(
-                hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
-                (negotiation_id,),
-            ).fetchone()
-        )
-        self._record_negotiation_event(
-            conn,
-            negotiation_id=negotiation_id,
-            event_type="STATE_TRANSITIONED",
-            actor_type=(actor_id or "system").split(":", 1)[0]
-            if ":" in (actor_id or "system")
-            else "system",
-            actor_id=actor_id or "system",
-            prior_state=expected_state,
-            next_state=next_state,
-            payload={"patch": patch},
-        )
-        conn.commit()
-        conn.close()
-        return {"ok": True, "record": record}
+            if int(cursor.rowcount or 0) != 1:
+                row = conn.execute(
+                    hosted.sql_query("SELECT status FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT status FROM meeting_time_negotiations WHERE negotiation_id=%s'),
+                    (negotiation_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(negotiation_id)
+                return {"ok": False, "reason": "state_conflict"}
+            record = dict(
+                conn.execute(
+                    hosted.sql_query("SELECT * FROM meeting_time_negotiations WHERE negotiation_id=?", 'SELECT * FROM meeting_time_negotiations WHERE negotiation_id=%s'),
+                    (negotiation_id,),
+                ).fetchone()
+            )
+            self._record_negotiation_event(
+                conn,
+                negotiation_id=negotiation_id,
+                event_type="STATE_TRANSITIONED",
+                actor_type=(actor_id or "system").split(":", 1)[0]
+                if ":" in (actor_id or "system")
+                else "system",
+                actor_id=actor_id or "system",
+                prior_state=expected_state,
+                next_state=next_state,
+                payload={"patch": patch},
+            )
+            conn.commit()
+            return {"ok": True, "record": record}
 
     def expire_negotiation_if_due(
         self,
