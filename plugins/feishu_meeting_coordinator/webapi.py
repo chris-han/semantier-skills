@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from .webapi_service import (
 )
 
 router = APIRouter(tags=["webapi-gateway"])
+task_runtime_router = APIRouter(tags=["meeting-workflow-projection"])
 
 ROUTE_POLICY_MAP = {
     ("GET", "/system/meeting-coordinator/simulation"): "authenticated",
@@ -51,6 +53,44 @@ ROUTE_POLICY_MAP = {
 }
 
 ROUTE_AUTHZ_CLASS_MAP = {}
+
+
+@task_runtime_router.get('/api/workflows/feishu-meeting-coordinator/instances')
+@task_runtime_router.get('/system/meeting-coordinator/negotiations')
+async def task_runtime_meeting_instances(request: Request):
+    from services.core_meeting_board_service import CoreMeetingBoardService
+    ctx = await asyncio.to_thread(request_context_from_request, request)
+    if not ctx.authenticated:
+        raise HTTPException(401, 'authentication required')
+    store = meeting_coordinator_store.store_for_context(ctx)
+    page = await asyncio.to_thread(CoreMeetingBoardService(store).list, ctx, limit=100)
+    rows = [await asyncio.to_thread(store.get_negotiation, item['negotiation_id']) for item in page['items']]
+    return {'ok':True, 'negotiations':rows, 'next_cursor':page['next_cursor']}
+
+
+@task_runtime_router.get('/api/workflows/feishu-meeting-coordinator/instances/{negotiation_id}')
+@task_runtime_router.get('/system/meeting-coordinator/negotiations/{negotiation_id}')
+async def task_runtime_meeting_instance(negotiation_id: str, request: Request):
+    from services.core_meeting_board_service import CoreMeetingBoardService
+    ctx = await asyncio.to_thread(request_context_from_request, request)
+    if not ctx.authenticated:
+        raise HTTPException(401, 'authentication required')
+    store = meeting_coordinator_store.store_for_context(ctx)
+    try:
+        await asyncio.to_thread(CoreMeetingBoardService(store).get, ctx, negotiation_id)
+        case = await asyncio.to_thread(store.get_negotiation, negotiation_id)
+        execution = await asyncio.to_thread(store.read_workflow_execution, negotiation_id)
+        result = {'ok':True, 'negotiation':case, 'workflow_execution':execution}
+        for field, method in (('participants','list_negotiation_participants'),
+                              ('candidate_slots','list_candidate_slots'), ('votes','list_negotiation_votes'),
+                              ('messages','list_negotiation_messages'), ('finalize_attempts','list_finalize_attempts'),
+                              ('events','list_negotiation_events')):
+            result[field] = await asyncio.to_thread(getattr(store,method), negotiation_id)
+        return result
+    except KeyError as exc:
+        raise HTTPException(404, 'Meeting work not found') from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get('/system/meeting-coordinator/simulation')

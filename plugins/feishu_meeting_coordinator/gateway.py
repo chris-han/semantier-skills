@@ -256,105 +256,12 @@ def ensure_delivery_retry_cron(*, workspace_id: str, cron: CronClient) -> str:
     )
 
 
-def _resolve_kanban_client(kanban: KanbanClient | None) -> KanbanClient:
-    if kanban is not None:
-        return kanban
-    from .kanban_client import HermesKanbanClient
-
-    return HermesKanbanClient()
 
 
-def _sync_negotiation_kanban_task_body(
-    *,
-    negotiation_id: str,
-    store: MeetingCoordinatorStore,
-    kanban: KanbanClient | None = None,
-    session_id: str | None = None,
-) -> bool:
-    negotiation = store.get_negotiation(negotiation_id)
-    task_id = str(negotiation.get("kanban_task_id") or "").strip()
-    if not task_id:
-        return False
-    try:
-        from .kanban_client import negotiation_task_body
-        from .dashboard.plugin_api import negotiation_task_metadata
-
-        metadata = negotiation_task_metadata(negotiation, store=store)
-    except Exception:
-        metadata = None
-    client = _resolve_kanban_client(kanban)
-    payload_session_id = (
-        session_id
-        or str(metadata.get("session_id") if isinstance(metadata, dict) else "")
-        or str(negotiation.get("session_id") or "").strip()
-    )
-    try:
-        body = negotiation_task_body(
-            negotiation=negotiation,
-            session_id=payload_session_id,
-            metadata=metadata if isinstance(metadata, dict) else None,
-        )
-        return bool(client.update_task_body(task_id, body=body))
-    except Exception:
-        return False
 
 
-def _kanban_comment_and_unblock_for_reply(
-    *,
-    negotiation: dict[str, Any],
-    accepted_message: dict[str, Any],
-    payload: dict[str, Any],
-    store: MeetingCoordinatorStore,
-    kanban: KanbanClient | None,
-) -> dict[str, Any]:
-    task_id = str(negotiation.get("kanban_task_id") or "").strip()
-    if not task_id:
-        return {"kanban_comment_id": None, "kanban_unblocked": False}
-    client = _resolve_kanban_client(kanban)
-    participant_user_id = str(accepted_message["participant_user_id"])
-    reply_text = str(payload.get("reply_text") or "").strip()
-    intent = str(payload.get("intent") or payload.get("vote") or "").strip()
-    comment_body = f"Reply from {participant_user_id}: {reply_text or intent or accepted_message['message_id']}"
-    comment_id = client.comment(
-        task_id,
-        author=participant_user_id,
-        body=comment_body,
-    )
-    store.set_message_kanban_comment(
-        str(accepted_message["message_event_id"]),
-        kanban_comment_id=str(comment_id),
-    )
-    unblocked = client.unblock(task_id)
-    return {"kanban_comment_id": str(comment_id), "kanban_unblocked": bool(unblocked)}
 
 
-def _complete_kanban_if_terminal(
-    *,
-    negotiation_id: str,
-    store: MeetingCoordinatorStore,
-    kanban: KanbanClient | None,
-    summary: str,
-) -> bool:
-    negotiation = store.get_negotiation(negotiation_id)
-    if not _negotiation_is_terminal(negotiation):
-        return False
-    task_id = str(negotiation.get("kanban_task_id") or "").strip()
-    if not task_id:
-        return False
-    _sync_negotiation_kanban_task_body(
-        negotiation_id=negotiation_id,
-        store=store,
-        kanban=kanban,
-    )
-    return _resolve_kanban_client(kanban).complete(
-        task_id,
-        summary=summary,
-        metadata={
-            "negotiation_id": negotiation_id,
-            "status": str(negotiation["status"]),
-            "finalize_attempt_id": negotiation.get("finalize_attempt_id"),
-        },
-    )
 
 
 def repair_delivery_retry_scheduler(
@@ -1550,12 +1457,6 @@ def _apply_requester_decision(
             next_state=next_state,
             payload={"action": action},
         )
-        completed = _complete_kanban_if_terminal(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
-            summary="Requester cancelled the meeting time negotiation.",
-        )
         stop_result = _stop_followup_cron_if_terminal(
             negotiation_id=negotiation_id,
             store=store,
@@ -1570,7 +1471,6 @@ def _apply_requester_decision(
         return {
             "requester_decision": action,
             "transition": result,
-            "kanban_completed": completed,
             **({"followup_cron_stopped": True, "followup_cron_stop": stop_result}
                if stop_result
                else {}),
@@ -1611,12 +1511,6 @@ def _apply_requester_decision(
             next_state=next_state,
             payload={"action": action},
         )
-        completed = _complete_kanban_if_terminal(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
-            summary="Requester kept the original meeting time.",
-        )
         stop_result = _stop_followup_cron_if_terminal(
             negotiation_id=negotiation_id,
             store=store,
@@ -1632,7 +1526,6 @@ def _apply_requester_decision(
             "requester_decision": action,
             "transition": result,
             "calendar_update": False,
-            "kanban_completed": completed,
             **({"followup_cron_stopped": True, "followup_cron_stop": stop_result}
                if stop_result
                else {}),
@@ -1676,12 +1569,6 @@ def _apply_requester_decision(
             next_state=next_state,
             payload={"action": action, "slot_id": slot_id},
         )
-        completed = _complete_kanban_if_terminal(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
-            summary="Requester selected a meeting time.",
-        )
         stop_result = _stop_followup_cron_if_terminal(
             negotiation_id=negotiation_id,
             store=store,
@@ -1697,7 +1584,6 @@ def _apply_requester_decision(
             "requester_decision": action,
             "transition": result,
             "selected_slot_id": slot_id,
-            "kanban_completed": completed,
             **({"followup_cron_stopped": True, "followup_cron_stop": stop_result}
                if stop_result
                else {}),
@@ -1733,11 +1619,6 @@ def _legacy_ensure_negotiation_followup_cron(
                 followup_cron_status="not_created",
                 next_followup_at=None,
             )
-            _sync_negotiation_kanban_task_body(
-                negotiation_id=negotiation_id,
-                store=store,
-                kanban=kanban,
-            )
             return negotiation
         return stop_negotiation_followup_cron(
             negotiation_id=negotiation_id,
@@ -1757,11 +1638,6 @@ def _legacy_ensure_negotiation_followup_cron(
             followup_cron_job_id=None,
             followup_cron_status="not_created",
             next_followup_at=None,
-        )
-        _sync_negotiation_kanban_task_body(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
         )
         return negotiation
     try:
@@ -1856,11 +1732,6 @@ def _legacy_ensure_negotiation_followup_cron(
         followup_cron_job_id=cron_job_id,
         followup_cron_status="active",
         next_followup_at=next_followup_at,
-    )
-    _sync_negotiation_kanban_task_body(
-        negotiation_id=negotiation_id,
-        store=store,
-        kanban=kanban,
     )
     return negotiation
 
@@ -1984,11 +1855,6 @@ def stop_negotiation_followup_cron(
         },
         prior_state=str(negotiation.get("status") or ""),
         next_state=str(result.get("status") or negotiation.get("status") or ""),
-    )
-    _sync_negotiation_kanban_task_body(
-        negotiation_id=negotiation_id,
-        store=store,
-        kanban=kanban,
     )
     return result | {
         "removed": bool(removed),
@@ -2342,11 +2208,6 @@ def _run_negotiation_followup_business(
                     terminal_reason="terminal_state",
                     terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
                 )
-            _sync_negotiation_kanban_task_body(
-                negotiation_id=negotiation_id,
-                store=store,
-                kanban=kanban,
-            )
             return {
                 "negotiation_id": negotiation_id,
                 "status": negotiation["status"],
@@ -2394,11 +2255,6 @@ def _run_negotiation_followup_business(
                 actor_type="system",
                 actor_id="meeting-time-negotiator",
                 payload={"followup_cron_job_id": cron_job_id},
-            )
-            _sync_negotiation_kanban_task_body(
-                negotiation_id=negotiation_id,
-                store=store,
-                kanban=kanban,
             )
             return {
                 "negotiation_id": negotiation_id,
@@ -2682,11 +2538,6 @@ def _run_negotiation_followup_business(
         )
 
         negotiation = store.get_negotiation(negotiation_id)
-        _sync_negotiation_kanban_task_body(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
-        )
         if _negotiation_is_terminal(negotiation) and cron is not None:
             stop_result = stop_negotiation_followup_cron(
                 negotiation_id=negotiation_id,
@@ -2816,20 +2667,10 @@ def negotiation_case_tick(
             )
             negotiation = store.get_negotiation(negotiation_id)
             if _negotiation_is_terminal(negotiation):
-                _sync_negotiation_kanban_task_body(
-                    negotiation_id=negotiation_id,
-                    store=store,
-                    kanban=kanban,
-                )
                 return {
                     **result,
                     "terminal": True,
                 }
-            _sync_negotiation_kanban_task_body(
-                negotiation_id=negotiation_id,
-                store=store,
-                kanban=kanban,
-            )
             return {
                 **result,
                 "terminal": False,
@@ -3009,20 +2850,8 @@ def submit_negotiation_reply(
             })
             break
         return duplicate_result
-    kanban_wakeup = _kanban_comment_and_unblock_for_reply(
-        negotiation=negotiation,
-        accepted_message=accepted,
-        payload=payload,
-        store=store,
-        kanban=kanban,
-    )
 
     def reply_result(**values: Any) -> dict[str, Any]:
-        _sync_negotiation_kanban_task_body(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
-        )
         from .durable_runtime import MeetingResponsibilityRuntime
 
         wake = MeetingResponsibilityRuntime(
@@ -3042,7 +2871,6 @@ def submit_negotiation_reply(
                 "wake_id": wake.wake_id,
             },
             **values,
-            **kanban_wakeup,
         }
 
     intent = str(payload.get("intent") or "").strip().lower()
@@ -3242,14 +3070,8 @@ def submit_negotiation_reply(
             },
             actor_id=owner,
         )
-        completed = _complete_kanban_if_terminal(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
-            summary="All required participants consented to a meeting time.",
-        )
         return reply_result(
-            vote=vote, next_state="consented", kanban_completed=completed
+            vote=vote, next_state="consented"
         )
     return reply_result(vote=vote, next_state="collecting_votes")
 
@@ -3432,11 +3254,6 @@ def finalize_negotiation_case(
 
     try:
         def _finalize_return(values: dict[str, Any]) -> dict[str, Any]:
-            _sync_negotiation_kanban_task_body(
-                negotiation_id=negotiation_id,
-                store=store,
-                kanban=kanban,
-            )
             return values
 
         def _successful_finalize_return(attempt: dict[str, Any]) -> dict[str, Any]:
@@ -3618,17 +3435,10 @@ def finalize_negotiation_case(
                 terminal_reason="requester_keep_original",
                 terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
             )
-            completed = _complete_kanban_if_terminal(
-                negotiation_id=negotiation_id,
-                store=store,
-                kanban=kanban,
-                summary="Meeting time negotiation finalized by requester while skipping calendar update.",
-            )
             return _finalize_return({
                 "attempt": succeeded,
                 "calendar_update_called": False,
                 "calendar_update_skipped": True,
-                "kanban_completed": completed,
                 **({"followup_cron_stopped": True, "followup_cron_stop": stop_result}
                    if stop_result
                    else {}),
@@ -3667,17 +3477,10 @@ def finalize_negotiation_case(
                     terminal_reason="stale_meeting_revision",
                     terminal_event_revision_id=str(negotiation.get("event_revision_id") or ""),
                 )
-                completed = _complete_kanban_if_terminal(
-                    negotiation_id=negotiation_id,
-                    store=store,
-                    kanban=kanban,
-                    summary="Meeting time finalization failed because the calendar revision was stale.",
-                )
                 return _finalize_return({
                     "attempt": failed,
                     "calendar_update_called": False,
                     "stale_meeting_revision": True,
-                    "kanban_completed": completed,
                     **({"followup_cron_stopped": bool(stop_result), "followup_cron_stop": stop_result}
                        if stop_result
                        else {}),
@@ -3717,17 +3520,10 @@ def finalize_negotiation_case(
                 result.get("event_revision_id") or negotiation.get("event_revision_id") or ""
             ),
         )
-        completed = _complete_kanban_if_terminal(
-            negotiation_id=negotiation_id,
-            store=store,
-            kanban=kanban,
-            summary="Meeting time negotiation finalized and calendar update succeeded.",
-        )
         result_payload = {
             "attempt": succeeded,
             "calendar_update_called": True,
             "result": result,
-            "kanban_completed": completed,
             "followup_cron_stopped": bool(stop_result),
             "followup_cron_stop": stop_result,
         }
