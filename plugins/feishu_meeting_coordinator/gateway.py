@@ -2281,6 +2281,10 @@ def _run_negotiation_followup_business(
     negotiation_id = str(payload.get("negotiation_id") or "").strip()
     if not negotiation_id:
         raise ValueError("negotiation_id is required")
+    if feishu_client is None:
+        from services.core_meeting_board_service import selected_core_meeting
+        if selected_core_meeting(store, negotiation_id):
+            raise PermissionError('core meeting requires its delivery owner')
     timer_id = str(payload.get("timer_id") or "").strip()
 
     owner = str(payload.get("owner") or f"negotiation_followup_cron:{negotiation_id}")
@@ -2854,6 +2858,10 @@ def negotiation_case_tick(
     negotiation_id = str(payload.get("negotiation_id") or "").strip()
     if not negotiation_id:
         raise ValueError("negotiation_id is required")
+    if send_message is None:
+        from services.core_meeting_board_service import selected_core_meeting
+        if selected_core_meeting(store, negotiation_id):
+            raise PermissionError('core meeting requires its delivery owner')
 
     negotiation = store.get_negotiation(negotiation_id)
     if _negotiation_is_terminal(negotiation):
