@@ -2140,7 +2140,9 @@ def negotiation_case_start(
     board.associate_meeting(ctx, case_id, marker)
     # Start retries bind the same responsibility; waits and in-flight claims
     # remain under their event/dispatcher owner rather than executing again.
-    if responsibility.lifecycle_state == READY:
+    # An absent transport is not authority to construct an ambient native
+    # client. Keep the persisted responsibility ready for the delivery owner.
+    if responsibility.lifecycle_state == READY and feishu_client is not None:
         try:
             runtime.run(case_id)
         except DurableResponsibilityError:
@@ -3174,6 +3176,12 @@ def submit_negotiation_reply(
         if core_ingress is None:
             raise PermissionError('selected core case requires verified SDK ingress')
         return MeetingClarificationDeliveryService(store).accept_verified(core_ingress)
+
+    # Fresh core-admitted meetings cannot enter the legacy, caller-asserted
+    # participant path. Their broader verified delivery owner is still required.
+    from services.core_meeting_board_service import selected_core_meeting
+    if case_id and selected_core_meeting(store, case_id):
+        raise PermissionError('core meeting requires verified SDK ingress through its delivery owner')
 
     if (
         payload.get("callback_origin") is True
