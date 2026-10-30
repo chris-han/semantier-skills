@@ -11,11 +11,11 @@ nodes:
   - id: ensure_negotiation_case
     kind: compute
     label: Ensure negotiation case
-  - id: ensure_kanban_task
+  - id: ensure_core_responsibility
     kind: effect
-    label: Ensure meeting coordinator task
+    label: Ensure meeting responsibility
     refs:
-      effect_contract_ref: feishu.meeting.kanban.ensure
+      effect_contract_ref: semantier.meeting.responsibility.ensure
   - id: ensure_followup_timer
     kind: effect
     label: Ensure follow-up timer
@@ -70,10 +70,10 @@ edges:
     transition_class: normal
   - id: case_to_task
     source: ensure_negotiation_case
-    target: ensure_kanban_task
+    target: ensure_core_responsibility
     transition_class: normal
   - id: task_to_timer
-    source: ensure_kanban_task
+    source: ensure_core_responsibility
     target: ensure_followup_timer
     transition_class: normal
   - id: timer_to_poll

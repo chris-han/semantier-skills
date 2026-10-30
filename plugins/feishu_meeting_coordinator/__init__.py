@@ -15,7 +15,6 @@ from .tools import (
     feishu_meeting_delivery_task_requeue,
     feishu_meeting_escalation_retry_tick,
     feishu_meeting_negotiation_case_finalize,
-    feishu_meeting_negotiation_kanban_worker_tick,
     feishu_meeting_negotiation_case_start,
     feishu_meeting_negotiation_case_stop,
     feishu_meeting_negotiation_case_submit_reply,
@@ -321,7 +320,6 @@ TOOL_SCHEMAS = {
             "monitor_id": {"type": "string"},
             "event_revision_id": {"type": "string"},
             "trigger_attendee_user_id": {"type": "string"},
-            "ensure_kanban": {"type": "boolean", "default": True},
         },
         required=("monitor_id", "event_revision_id", "trigger_attendee_user_id"),
     ),
@@ -442,17 +440,6 @@ TOOL_SCHEMAS = {
             "negotiation_id": {"type": "string"},
         },
         required=("negotiation_id",),
-    ),
-    "feishu_meeting_negotiation_kanban_worker_tick": _object_schema(
-        {
-            "kanban_task_id": {"type": "string"},
-            "task_id": {"type": "string"},
-            "task_body": {"oneOf": [{"type": "string"}, {"type": "object"}]},
-            "body": {"oneOf": [{"type": "string"}, {"type": "object"}]},
-            "negotiation_id": {"type": "string"},
-            "session_id": {"type": "string"},
-            "user_id": {"type": "string"},
-        },
     ),
     "feishu_meeting_negotiation_case_submit_reply": _object_schema(
         {
@@ -745,13 +732,6 @@ def register(ctx) -> None:
         handler=feishu_meeting_followup_cron_tick,
         description="Run one follow-up negotiation tick for an active negotiation.",
         schema=_function_schema("feishu_meeting_followup_cron_tick"),
-        toolset="meeting-coordinator",
-    )
-    ctx.register_tool(
-        name="feishu_meeting_negotiation_kanban_worker_tick",
-        handler=feishu_meeting_negotiation_kanban_worker_tick,
-        description="Run one claimed Kanban worker tick for a meeting time negotiation task.",
-        schema=_function_schema("feishu_meeting_negotiation_kanban_worker_tick"),
         toolset="meeting-coordinator",
     )
     ctx.register_tool(

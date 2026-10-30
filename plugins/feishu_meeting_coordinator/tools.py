@@ -456,15 +456,6 @@ class _DefaultGateway:
             cron=self._cron(),
         )
 
-    def negotiation_kanban_worker_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        return meeting_coordinator_gateway.negotiation_kanban_worker_tick(
-            payload,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
-            kanban=meeting_coordinator_gateway._resolve_kanban_client(None),
-        )
-
     def negotiation_case_submit_reply(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
 
@@ -1487,14 +1478,6 @@ def feishu_meeting_followup_cron_stop(args, **kwargs):
 def feishu_meeting_followup_cron_tick(args, **kwargs):
     try:
         result = _gateway(kwargs).negotiation_followup_cron_tick(dict(args or {}))
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("result", result)
-
-
-def feishu_meeting_negotiation_kanban_worker_tick(args, **kwargs):
-    try:
-        result = _gateway(kwargs).negotiation_kanban_worker_tick(dict(args or {}))
     except Exception as exc:
         return _error(str(exc))
     return _ok("result", result)
