@@ -69,318 +69,12 @@ def _meeting_modules():
     return meeting_coordinator_gateway, meeting_coordinator_store
 
 
-class _LocalCronClient:
-    def __init__(self, hermes_home: str):
-        self.hermes_home = Path(hermes_home).expanduser().resolve()
-
-    def _bind(self):
-        from runtime_paths import bind_workspace_env
-
-        return bind_workspace_env(self.hermes_home)
-
-    def _workspace_skill_refs(self, skills: list[str]) -> list[str]:
-        resolved: list[str] = []
-        for skill in skills:
-            skill_name = str(skill or "").strip()
-            if skill_name != "feishu_meeting_coordinator":
-                if skill_name:
-                    resolved.append(skill_name)
-                continue
-            plugin_dir = self.hermes_home / "plugins" / skill_name
-            if (plugin_dir / "SKILL.md").exists():
-                resolved.append(
-                    "feishu_meeting_coordinator:feishu-bot-meeting-coordinator"
-                )
-            else:
-                resolved.append(skill_name)
-        return resolved
-
-    def _ensure_no_agent_script(self, *, profile: str, script: str, name: str) -> None:
-        if os.environ.get("SEMANTIER_PUBLIC_RUN_ID") and name.startswith("meeting-rsvp-delivery-retry:"):
-            raise RuntimeError("Legacy escalation retry is retired for public tasks")
-        # Hermes cron resolves scripts against the bound workspace home.
-        # Named profiles do not belong to the current create_job wire contract.
-        scripts_dir = self.hermes_home / "scripts"
-        scripts_dir.mkdir(parents=True, exist_ok=True)
-        script_path = (scripts_dir / script).resolve()
-        try:
-            script_path.relative_to(scripts_dir.resolve())
-        except ValueError as exc:
-            raise RuntimeError(
-                f"blocked monitor script path outside profile scripts dir: {script!r}"
-            ) from exc
-        state_dir_raw = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
-        if not state_dir_raw:
-            raise RuntimeError(
-                "SEMANTIER_LOCAL_STATE_DIR is required for no-agent meeting coordinator cron"
-            )
-        state_dir = Path(state_dir_raw).expanduser().resolve()
-        workspace_id = self.hermes_home.name
-        auth_db_path = (
-            Path(os.environ.get("SEMANTIER_AUTH_DB_PATH") or state_dir / "auth.db")
-            .expanduser()
-            .resolve()
-        )
-        plugin_dir = self.hermes_home / "plugins" / "feishu_meeting_coordinator"
-        plugin_loader = f"""
-                plugin_tools_path = Path({str(plugin_dir)!r}) / "tools.py"
-                spec = importlib.util.spec_from_file_location(
-                    "semantier_feishu_meeting_coordinator_tools",
-                    plugin_tools_path,
-                )
-                if spec is None or spec.loader is None:
-                    raise RuntimeError(f"failed to load plugin tools from {{plugin_tools_path}}")
-                plugin_tools = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(plugin_tools)
-        """
-        delivery_prefix = "meeting-rsvp-delivery-retry:"
-        followup_prefix = "meeting-time-negotiator-followup:"
-        if name.startswith(delivery_prefix):
-            retry_workspace_id = name[len(delivery_prefix) :].strip()
-            if retry_workspace_id != workspace_id:
-                raise RuntimeError(
-                    "delivery retry cron workspace does not match Hermes home"
-                )
-            invocation = f"""
-                result_text = plugin_tools.feishu_meeting_escalation_retry_tick(
-                    {{"workspace_id": {workspace_id!r}}}
-                )
-            """
-        elif name.startswith(followup_prefix):
-            followup_identity = name[len(followup_prefix) :].strip()
-            parts = followup_identity.split("::", 1)
-            negotiation_id = parts[0].strip()
-            timer_id = parts[1].strip() if len(parts) > 1 else ""
-            if not negotiation_id:
-                raise RuntimeError(
-                    "missing negotiation id for no-agent meeting coordinator follow-up job"
-                )
-            invocation = f"""
-                result_text = plugin_tools.feishu_meeting_followup_cron_tick(
-                    {{"negotiation_id": {negotiation_id!r}, "timer_id": {timer_id!r}}}
-                )
-            """
-        else:
-            raise RuntimeError(f"unsupported no-agent meeting coordinator job {name!r}")
-        script_text = (
-            "from __future__ import annotations\n\n"
-            "import importlib.util\n"
-            "import json\n"
-            "import os\n"
-            "from pathlib import Path\n\n"
-            'profile_home = Path(os.environ["HERMES_HOME"]).resolve()\n'
-            f'os.environ["SEMANTIER_LOCAL_STATE_DIR"] = {str(state_dir)!r}\n'
-            f'os.environ["SEMANTIER_AUTH_DB_PATH"] = {str(auth_db_path)!r}\n'
-            f'os.environ["SEMANTIER_WORKSPACE_ID"] = {workspace_id!r}\n'
-            f'os.environ.setdefault("HERMES_SESSION_WORKSPACE_OWNER_ID", {workspace_id!r})\n\n'
-            f"{textwrap.dedent(plugin_loader).strip()}\n\n"
-            f"{textwrap.dedent(invocation).strip()}\n"
-            "try:\n"
-            "    payload = json.loads(result_text)\n"
-            "except json.JSONDecodeError:\n"
-            "    print(result_text)\n"
-            "    raise SystemExit(1)\n"
-            'if not payload.get("ok"):\n'
-            "    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))\n"
-            "    raise SystemExit(1)\n"
-            'print(json.dumps({"wakeAgent": False, "result": payload.get("result")}, ensure_ascii=False, sort_keys=True))\n'
-        )
-        script_path.write_text(script_text, encoding="utf-8")
-
-    def agent_runtime_config(self, *, profile: str) -> dict[str, str | None]:
-        if not os.environ.get("SEMANTIER_WORKSPACE_ID"):
-            raise RuntimeError("missing_workspace_authority")
-        try:
-            _feishu_helper()._resolve_runtime_feishu_config()
-        except Exception as exc:
-            raise RuntimeError("missing_feishu_bot_config") from exc
-        try:
-            from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
-
-            profile_home = Path(
-                resolve_profile_env(normalize_profile_name(profile))
-            ).resolve()
-        except Exception as exc:
-            raise RuntimeError("missing_workspace_authority") from exc
-        config_path = profile_home / "config.yaml"
-        try:
-            loaded = (
-                yaml.safe_load(config_path.read_text(encoding="utf-8"))
-                if config_path.exists()
-                else {}
-            )
-        except Exception as exc:
-            raise RuntimeError("invalid_profile_configuration") from exc
-        config = loaded if isinstance(loaded, dict) else {}
-        model_cfg = config.get("model")
-        if isinstance(model_cfg, str):
-            model = model_cfg.strip()
-            provider = ""
-            base_url = None
-        elif isinstance(model_cfg, dict):
-            model = str(
-                model_cfg.get("default") or model_cfg.get("model") or ""
-            ).strip()
-            provider = str(model_cfg.get("provider") or "").strip()
-            base_url = str(model_cfg.get("base_url") or "").strip() or None
-        else:
-            model = ""
-            provider = ""
-            base_url = None
-        return {
-            "model": model or None,
-            "provider": provider or None,
-            "base_url": base_url,
-        }
-
-    def ensure_job(
-        self,
-        *,
-        name: str,
-        schedule: str,
-        profile: str,
-        prompt: str,
-        skills: list[str],
-        deliver: str,
-        repeat: int,
-        no_agent: bool = False,
-        script: str | None = None,
-        model: str | None = None,
-        provider: str | None = None,
-        base_url: str | None = None,
-    ) -> str:
-        with self._bind():
-            from cron.jobs import create_job, list_jobs, update_job
-
-            resolved_skills = self._workspace_skill_refs(skills)
-            if no_agent:
-                if not script:
-                    raise RuntimeError(
-                        "no-agent meeting coordinator cron requires a script"
-                    )
-                self._ensure_no_agent_script(profile=profile, script=script, name=name)
-            for job in list_jobs(include_disabled=True):
-                if str(job.get("name") or "") != name:
-                    continue
-                job_id = str(job.get("id") or "")
-                updates: dict[str, Any] = {}
-                if job.get("enabled") is False:
-                    updates["enabled"] = True
-                if list(job.get("skills") or []) != resolved_skills:
-                    updates["skills"] = resolved_skills
-                if bool(job.get("no_agent")) is not bool(no_agent):
-                    updates["no_agent"] = bool(no_agent)
-                if (job.get("script") or None) != script:
-                    updates["script"] = script
-                if no_agent and str(job.get("model") or ""):
-                    updates["model"] = None
-                if no_agent and str(job.get("provider") or ""):
-                    updates["provider"] = None
-                if no_agent and str(job.get("base_url") or ""):
-                    updates["base_url"] = None
-                if not no_agent and (job.get("model") or None) != model:
-                    updates["model"] = model
-                if not no_agent and (job.get("provider") or None) != provider:
-                    updates["provider"] = provider
-                if not no_agent and (job.get("base_url") or None) != base_url:
-                    updates["base_url"] = base_url
-                if updates:
-                    update_job(job_id, updates)
-                return job_id
-            job = create_job(
-                prompt=prompt,
-                schedule=schedule,
-                name=name,
-                skills=resolved_skills,
-                deliver=deliver,
-                repeat=repeat,
-                no_agent=no_agent,
-                script=script,
-                model=model,
-                provider=provider,
-                base_url=base_url,
-            )
-            return str(job["id"])
-
-    def job_exists(self, cron_job_id: str) -> bool:
-        with self._bind():
-            from cron.jobs import list_jobs
-
-            return any(
-                str(job.get("id") or "") == str(cron_job_id)
-                for job in list_jobs(include_disabled=True)
-            )
-
-    def get_job(self, cron_job_id: str) -> dict[str, Any] | None:
-        with self._bind():
-            from cron.jobs import get_job
-
-            return get_job(cron_job_id)
-
-    def disable_job(self, cron_job_id: str) -> None:
-        with self._bind():
-            from cron.jobs import update_job
-
-            update_job(cron_job_id, {"enabled": False})
-
-    def delete_job(self, cron_job_id: str) -> bool:
-        with self._bind():
-            from cron.jobs import remove_job
-
-            return bool(remove_job(cron_job_id))
 
 
 class _DefaultGateway:
-    def _cron(self) -> _LocalCronClient:
-        hermes_home = _text(_session_metadata().get("hermes_home")) or _session_env(
-            "HERMES_SESSION_HERMES_HOME"
-        )
-        if not hermes_home:
-            raise RuntimeError("Semantier gateway binding required")
-        return _LocalCronClient(hermes_home)
 
-    def _cron_for_monitor(self, monitor: dict[str, Any] | None) -> _LocalCronClient:
-        binding: dict[str, Any] = {}
-        if monitor:
-            raw_binding = monitor.get("creator_delivery_binding_json")
-            if isinstance(raw_binding, str) and raw_binding.strip():
-                try:
-                    parsed = json.loads(raw_binding)
-                except json.JSONDecodeError:
-                    parsed = {}
-                if isinstance(parsed, dict):
-                    binding = parsed
-            elif isinstance(raw_binding, dict):
-                binding = raw_binding
-        hermes_home = (
-            _text(binding.get("hermes_home"))
-            or _text(_session_metadata().get("hermes_home"))
-            or _session_env("HERMES_SESSION_HERMES_HOME")
-        )
-        if not hermes_home:
-            raise RuntimeError("Semantier gateway binding required")
-        return _LocalCronClient(hermes_home)
 
-    def escalation_retry_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
 
-        return meeting_coordinator_gateway.escalation_retry_tick(
-            payload,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
-            delivery_client=_CreatorDeliveryClient(),
-        )
-
-    def requeue_delivery_task(
-        self, *, delivery_task_id: str, reason: str
-    ) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        return meeting_coordinator_gateway.requeue_delivery_task(
-            delivery_task_id=delivery_task_id,
-            reason=reason,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
-            cron=self._cron(),
-        )
 
     def negotiation_case_start(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
@@ -388,73 +82,22 @@ class _DefaultGateway:
             payload,
             store=meeting_coordinator_store.MeetingCoordinatorStore(),
             kanban=None,
-            cron=self._cron(),
+            cron=None,
         )
 
     def negotiation_case_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
         meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
         store = meeting_coordinator_store.MeetingCoordinatorStore()
         negotiation_id = _text(payload.get("negotiation_id"))
-        cron = self._cron_for_monitor(store.get_negotiation(negotiation_id)) if negotiation_id else None
+        cron = None
         return meeting_coordinator_gateway.negotiation_case_tick(
             payload,
             store=store,
             cron=cron,
         )
 
-    def negotiation_followup_cron_ensure(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
 
-        negotiation_id = _text(payload.get("negotiation_id"))
-        if not negotiation_id:
-            raise ValueError("negotiation_id is required")
-        schedule = str(payload.get("schedule") or "every 2m")
-        owner_profile = str(payload.get("owner_profile") or "").strip() or None
-        owner_idempotency_key = (
-            str(payload.get("owner_idempotency_key") or "").strip() or None
-        )
-        return meeting_coordinator_gateway.ensure_negotiation_followup_cron(
-            negotiation_id=negotiation_id,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
-            cron=self._cron(),
-            schedule=schedule,
-            owner_profile=owner_profile,
-            owner_idempotency_key=owner_idempotency_key,
-        )
 
-    def negotiation_followup_cron_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        negotiation_id = _text(payload.get("negotiation_id"))
-        if not negotiation_id:
-            raise ValueError("negotiation_id is required")
-        expected_followup_cron_job_id = payload.get("expected_followup_cron_job_id")
-        owner_profile = str(payload.get("owner_profile") or "").strip() or None
-        owner_idempotency_key = (
-            str(payload.get("owner_idempotency_key") or "").strip() or None
-        )
-        return meeting_coordinator_gateway.stop_negotiation_followup_cron(
-            negotiation_id=negotiation_id,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
-            cron=self._cron(),
-            owner_profile=owner_profile,
-            owner_idempotency_key=owner_idempotency_key,
-            reason=_text(payload.get("reason") or "operator_stop"),
-            expected_followup_cron_job_id=(
-                str(expected_followup_cron_job_id)
-                if expected_followup_cron_job_id is not None
-                else None
-            ),
-        )
-
-    def negotiation_followup_cron_tick(self, payload: dict[str, Any]) -> dict[str, Any]:
-        meeting_coordinator_gateway, meeting_coordinator_store = _meeting_modules()
-
-        return meeting_coordinator_gateway.negotiation_followup_cron_tick(
-            payload,
-            store=meeting_coordinator_store.MeetingCoordinatorStore(),
-            cron=self._cron(),
-        )
 
     def negotiation_case_submit_reply(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise PermissionError('verified meeting reply required')
@@ -467,7 +110,7 @@ class _DefaultGateway:
             payload,
             store=store,
             calendar_client=_CalendarUpdateClient(),
-            cron=self._cron(),
+            cron=None,
         )
 
     def negotiation_requester_decision(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -767,8 +410,8 @@ class _CreatorDeliveryClient:
             if thread_id
             else f"{platform}:{chat_id}"
         )
-        cron = _LocalCronClient(hermes_home)
-        with cron._bind():
+        from runtime_paths import bind_workspace_env
+        with bind_workspace_env(Path(hermes_home).expanduser().resolve()):
             _hydrate_saved_gateway_env()
             from tools.send_message_tool import send_message_tool
 
@@ -1443,28 +1086,10 @@ def feishu_meeting_negotiation_case_tick(args, **kwargs):
     return _ok("result", result)
 
 
-def feishu_meeting_followup_cron_ensure(args, **kwargs):
-    try:
-        result = _gateway(kwargs).negotiation_followup_cron_ensure(dict(args or {}))
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("result", result)
 
 
-def feishu_meeting_followup_cron_stop(args, **kwargs):
-    try:
-        result = _gateway(kwargs).negotiation_followup_cron_stop(dict(args or {}))
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("result", result)
 
 
-def feishu_meeting_followup_cron_tick(args, **kwargs):
-    try:
-        result = _gateway(kwargs).negotiation_followup_cron_tick(dict(args or {}))
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("result", result)
 
 
 def feishu_meeting_negotiation_case_submit_reply(args, **kwargs):
@@ -1499,32 +1124,8 @@ def feishu_meeting_negotiation_case_stop(args, **kwargs):
     return _ok("negotiation", result)
 
 
-def feishu_meeting_escalation_retry_tick(args, **kwargs):
-    if os.environ.get("SEMANTIER_PUBLIC_RUN_ID"):
-        return _error("Legacy escalation retry is retired for public tasks")
-    try:
-        result = _gateway(kwargs).escalation_retry_tick(dict(args or {}))
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("result", result)
 
 
-def feishu_meeting_delivery_task_requeue(args, **kwargs):
-    if os.environ.get("SEMANTIER_PUBLIC_RUN_ID"):
-        return _error("Legacy escalation requeue is retired for public tasks")
-    payload = dict(args or {})
-    delivery_task_id = str(payload.get("delivery_task_id") or "").strip()
-    reason = str(payload.get("reason") or "operator requested requeue").strip()
-    if not delivery_task_id:
-        return _error("delivery_task_id is required")
-    try:
-        task = _gateway(kwargs).requeue_delivery_task(
-            delivery_task_id=delivery_task_id,
-            reason=reason,
-        )
-    except Exception as exc:
-        return _error(str(exc))
-    return _ok("delivery_task", task)
 
 
 def feishu_meeting_negotiation_resume(args, **kwargs):

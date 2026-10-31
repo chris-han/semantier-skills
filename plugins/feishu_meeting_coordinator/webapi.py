@@ -18,7 +18,6 @@ from . import gateway as meeting_coordinator_gateway
 from . import store as meeting_coordinator_store
 from .webapi_service import (
     MeetingCoordinatorWebApiCalendarClient,
-    MeetingCoordinatorWebApiCronClient,
     meeting_coordinator_delivery_client_from_context,
 )
 
@@ -32,7 +31,6 @@ ROUTE_POLICY_MAP = {
     ("POST", "/callbacks/feishu/meeting-coordinator/reply"): "public",
     ("GET", "/system/meeting-coordinator/workflow-binding"): "authenticated",
     ("POST", "/system/meeting-coordinator/negotiations/start"): "authenticated",
-    ("GET", "/system/meeting-coordinator/monitors"): "authenticated",
     ("GET", "/system/meeting-coordinator/negotiations"): "authenticated",
     ("GET", "/system/meeting-coordinator/negotiations/{negotiation_id}"): "authenticated",
     ("POST", "/system/meeting-coordinator/negotiations/{negotiation_id}/run"): "authenticated",
@@ -45,11 +43,6 @@ ROUTE_POLICY_MAP = {
     ): "authenticated",
     ("GET", "/system/meeting-coordinator/settings"): "authenticated",
     ("PUT", "/system/meeting-coordinator/settings"): "authenticated",
-    ("POST", "/system/meeting-coordinator/delivery-tasks/retry"): "authenticated",
-    (
-        "POST",
-        "/system/meeting-coordinator/delivery-tasks/{delivery_task_id}/requeue",
-    ): "authenticated",
 }
 
 ROUTE_AUTHZ_CLASS_MAP = {}
@@ -369,29 +362,6 @@ async def feishu_meeting_coordinator_reply_callback(request: Request):
     return {"ok": True, "result": result}
 
 
-@router.get("/system/meeting-coordinator/monitors")
-async def system_meeting_coordinator_monitors(request: Request):
-    ctx = request_context_from_request(request)
-    if not ctx.authenticated:
-        raise HTTPException(status_code=401, detail="authentication required")
-    store = meeting_coordinator_store.store_for_context(ctx)
-    meeting_coordinator_gateway.repair_delivery_retry_scheduler(
-        workspace_id=ctx.workspace_id,
-        store=store,
-        cron=MeetingCoordinatorWebApiCronClient(ctx),
-    )
-    return {
-        "ok": True,
-        "monitors": store.list_operation_monitors(
-            workspace_id=ctx.workspace_id,
-            limit=100,
-        ),
-        "deliveryTasks": store.list_operation_delivery_tasks(
-            workspace_id=ctx.workspace_id,
-            limit=100,
-        ),
-        "scheduler": store.get_workspace_state(ctx.workspace_id),
-    }
 
 
 @router.get("/system/meeting-coordinator/workflow-binding")
@@ -417,7 +387,7 @@ async def system_meeting_coordinator_negotiation_start(request: Request):
         result = meeting_coordinator_gateway.negotiation_case_start(
             body,
             store=store,
-            cron=MeetingCoordinatorWebApiCronClient(ctx),
+            cron=None,
             runtime_context=ctx,
         )
         return {'ok': True, 'negotiation':result}
@@ -609,7 +579,7 @@ async def system_meeting_coordinator_negotiation_reply(
                 "message_id": message_id,
             },
             store=store,
-            cron=MeetingCoordinatorWebApiCronClient(ctx),
+            cron=None,
         )
         return {
             "ok": True,
@@ -624,7 +594,7 @@ async def system_meeting_coordinator_negotiation_reply(
                 "message_id": message_id,
             },
             store=store,
-            cron=MeetingCoordinatorWebApiCronClient(ctx),
+            cron=None,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -661,7 +631,7 @@ async def system_meeting_coordinator_negotiation_finalize(
             store=store,
             runtime_context=ctx,
             calendar_client=MeetingCoordinatorWebApiCalendarClient(ctx),
-            cron=MeetingCoordinatorWebApiCronClient(ctx),
+            cron=None,
         )
     except KeyError as exc:
         raise HTTPException(
@@ -803,37 +773,3 @@ async def system_meeting_coordinator_settings_update(request: Request):
             "max_followups": int(state.get("max_followups") or 3),
         },
     }
-
-
-@router.post("/system/meeting-coordinator/delivery-tasks/retry")
-async def system_meeting_coordinator_delivery_retry(request: Request):
-    ctx = request_context_from_request(request)
-    if not ctx.authenticated:
-        raise HTTPException(status_code=401, detail="authentication required")
-    result = meeting_coordinator_gateway.escalation_retry_tick(
-        {"workspace_id": ctx.workspace_id},
-        store=meeting_coordinator_store.store_for_context(ctx),
-        delivery_client=meeting_coordinator_delivery_client_from_context(ctx),
-    )
-    return {"ok": True, **result}
-
-
-@router.post("/system/meeting-coordinator/delivery-tasks/{delivery_task_id}/requeue")
-async def system_meeting_coordinator_delivery_task_requeue(
-    delivery_task_id: str,
-    request: Request,
-):
-    ctx = request_context_from_request(request)
-    if not ctx.authenticated:
-        raise HTTPException(status_code=401, detail="authentication required")
-    body = await request.json()
-    reason = str(body.get("reason") or "").strip()
-    if not reason:
-        raise HTTPException(status_code=400, detail="reason is required")
-    task = meeting_coordinator_gateway.requeue_delivery_task(
-        delivery_task_id=delivery_task_id,
-        reason=reason,
-        store=meeting_coordinator_store.store_for_context(ctx),
-        cron=MeetingCoordinatorWebApiCronClient(ctx),
-    )
-    return {"ok": True, "delivery_task": task}

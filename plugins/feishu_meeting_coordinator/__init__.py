@@ -12,8 +12,6 @@ from .tools import (
     feishu_final_invitations_send,
     feishu_meeting_attendee_status_list,
     feishu_meeting_create,
-    feishu_meeting_delivery_task_requeue,
-    feishu_meeting_escalation_retry_tick,
     feishu_meeting_negotiation_case_finalize,
     feishu_meeting_negotiation_case_start,
     feishu_meeting_negotiation_case_stop,
@@ -31,9 +29,6 @@ from .tools import (
     feishu_meeting_slot_normalize,
     feishu_meeting_vote_record,
     feishu_meeting_negotiation_cancel,
-    feishu_meeting_followup_cron_ensure,
-    feishu_meeting_followup_cron_stop,
-    feishu_meeting_followup_cron_tick,
     feishu_meeting_negotiation_start,
     feishu_meeting_negotiation_submit_response,
     feishu_meeting_new_time_propose,
@@ -329,13 +324,6 @@ TOOL_SCHEMAS = {
         },
         required=("negotiation_id",),
     ),
-    "feishu_meeting_followup_cron_ensure": _object_schema(
-        {
-            "negotiation_id": {"type": "string"},
-            "schedule": {"type": "string", "default": "every 2m"},
-        },
-        required=("negotiation_id",),
-    ),
     "feishu_meeting_negotiation_resume": _object_schema(
         {
             "negotiation_id": {"type": "string"},
@@ -422,25 +410,6 @@ TOOL_SCHEMAS = {
         },
         required=("negotiation_id",),
     ),
-    "feishu_meeting_followup_cron_stop": _object_schema(
-        {
-            "negotiation_id": {"type": "string"},
-            "expected_followup_cron_job_id": {
-                "type": "string",
-                "description": (
-                    "If provided, stop only when the negotiation currently tracks this follow-up cron job id."
-                ),
-            },
-            "reason": {"type": "string", "default": "operator_stop"},
-        },
-        required=("negotiation_id",),
-    ),
-    "feishu_meeting_followup_cron_tick": _object_schema(
-        {
-            "negotiation_id": {"type": "string"},
-        },
-        required=("negotiation_id",),
-    ),
     "feishu_meeting_negotiation_case_submit_reply": _object_schema(
         {
             "negotiation_id": {"type": "string"},
@@ -507,19 +476,6 @@ TOOL_SCHEMAS = {
             "reason": {"type": "string"},
         },
         required=("negotiation_id",),
-    ),
-    "feishu_meeting_escalation_retry_tick": _object_schema(
-        {
-            "workspace_id": {"type": "string"},
-        },
-        required=("workspace_id",),
-    ),
-    "feishu_meeting_delivery_task_requeue": _object_schema(
-        {
-            "delivery_task_id": {"type": "string"},
-            "reason": {"type": "string"},
-        },
-        required=("delivery_task_id",),
     ),
 }
 TOOL_SCHEMAS["feishu_contacts_search"]["anyOf"] = [
@@ -651,13 +607,6 @@ def register(ctx) -> None:
         toolset="meeting-coordinator",
     )
     ctx.register_tool(
-        name="feishu_meeting_followup_cron_ensure",
-        handler=feishu_meeting_followup_cron_ensure,
-        description="Ensure a local no-agent follow-up cron job for a negotiation.",
-        schema=_function_schema("feishu_meeting_followup_cron_ensure"),
-        toolset="meeting-coordinator",
-    )
-    ctx.register_tool(
         name="feishu_meeting_negotiation_resume",
         handler=feishu_meeting_negotiation_resume,
         description="Load negotiation snapshot state for diagnostics and resumption.",
@@ -721,20 +670,6 @@ def register(ctx) -> None:
         toolset="meeting-coordinator",
     )
     ctx.register_tool(
-        name="feishu_meeting_followup_cron_stop",
-        handler=feishu_meeting_followup_cron_stop,
-        description="Stop a local no-agent follow-up cron job for a negotiation.",
-        schema=_function_schema("feishu_meeting_followup_cron_stop"),
-        toolset="meeting-coordinator",
-    )
-    ctx.register_tool(
-        name="feishu_meeting_followup_cron_tick",
-        handler=feishu_meeting_followup_cron_tick,
-        description="Run one follow-up negotiation tick for an active negotiation.",
-        schema=_function_schema("feishu_meeting_followup_cron_tick"),
-        toolset="meeting-coordinator",
-    )
-    ctx.register_tool(
         name="feishu_meeting_negotiation_case_submit_reply",
         handler=feishu_meeting_negotiation_case_submit_reply,
         description="Submit a correlated participant reply into a durable negotiation case.",
@@ -762,21 +697,6 @@ def register(ctx) -> None:
         schema=_function_schema("feishu_meeting_negotiation_case_stop"),
         toolset="meeting-coordinator",
     )
-    if not os.environ.get("SEMANTIER_PUBLIC_RUN_ID"):
-        ctx.register_tool(
-            name="feishu_meeting_escalation_retry_tick",
-            handler=feishu_meeting_escalation_retry_tick,
-            description="Retry pending creator escalation delivery tasks.",
-            schema=_function_schema("feishu_meeting_escalation_retry_tick"),
-            toolset="meeting-coordinator",
-        )
-        ctx.register_tool(
-            name="feishu_meeting_delivery_task_requeue",
-            handler=feishu_meeting_delivery_task_requeue,
-            description="Requeue a failed creator escalation delivery task and heal the retry cron.",
-            schema=_function_schema("feishu_meeting_delivery_task_requeue"),
-            toolset="meeting-coordinator",
-        )
     ctx.register_cli_command(
         name="feishu-meeting-coordinator",
         help="Inspect and operate Feishu meeting coordination tasks",
