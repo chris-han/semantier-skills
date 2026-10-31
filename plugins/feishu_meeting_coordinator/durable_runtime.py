@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -31,27 +30,6 @@ def _iso(value: datetime) -> str:
 
 def _reply_source(negotiation_id: str) -> str:
     return f"feishu:negotiation:{negotiation_id}:reply"
-
-
-@dataclass
-class MeetingTimerProvider:
-    negotiation_id: str
-    cron: Any
-
-    def arm(self, *, timer_id: str, scheduled_at: str) -> str | None:
-        from .gateway import _followup_provider_job_name, _followup_script_name
-
-        return self.cron.ensure_job(
-            name=_followup_provider_job_name(self.negotiation_id, timer_id),
-            schedule=scheduled_at,
-            profile="meeting-coordinator",
-            prompt=f"Timer signal only for {self.negotiation_id} / {timer_id}.",
-            skills=["feishu_meeting_coordinator"],
-            deliver="local",
-            repeat=1,
-            no_agent=True,
-            script=_followup_script_name(self.negotiation_id),
-        )
 
 
 class MeetingContinuationHandler:
@@ -252,53 +230,10 @@ class MeetingResponsibilityRuntime:
         return self.responsibilities.get(responsibility_id)
 
     def _arm_pending_timers(self, responsibility_id: str) -> None:
-        if self.cron is None:
-            return
-        item = self.responsibilities.get(responsibility_id)
-        if item is None:
-            raise KeyError(responsibility_id)
-        for wait in self.responsibilities.pending_waits(responsibility_id):
-            if wait.kind != TIMER:
-                continue
-            occurrence = self.timer_store.get(wait.source_ref)
-            if occurrence is None or occurrence.state != SCHEDULED:
-                continue
-            if occurrence.provider_ref:
-                continue
-            provider = MeetingTimerProvider(
-                negotiation_id=item.domain_ref,
-                cron=self.cron,
-            )
-            try:
-                armed = self.timer_store.arm(
-                    timer_id=occurrence.timer_id,
-                    provider=provider,
-                )
-            except Exception as exc:
-                self.store.set_negotiation_followup_cron_metadata(
-                    item.domain_ref,
-                    followup_cron_job_id=None,
-                    followup_cron_status="repair_required",
-                    next_followup_at=occurrence.scheduled_at,
-                )
-                self.store.record_negotiation_event(
-                    negotiation_id=item.domain_ref,
-                    event_type="FOLLOWUP_TIMER_ARM_DEFERRED",
-                    actor_type="system",
-                    actor_id="durable-responsibility-runtime",
-                    payload={
-                        "timer_id": occurrence.timer_id,
-                        "scheduled_at": occurrence.scheduled_at,
-                        "error_type": type(exc).__name__,
-                    },
-                )
-                continue
-            self.store.set_negotiation_followup_cron_metadata(
-                item.domain_ref,
-                followup_cron_job_id=armed.provider_ref,
-                followup_cron_status="active",
-                next_followup_at=armed.scheduled_at,
-            )
+        # Fresh admitted reminders are armed by MeetingFollowupTimerService.
+        # Legacy timer identities are not adopted or reconstructed.
+        if any(wait.kind == TIMER for wait in self.responsibilities.pending_waits(responsibility_id)):
+            raise PermissionError("legacy reminder scheduling retired; core timer admission required")
 
     def _record_waiting(self, *, negotiation_id: str, responsibility_id: str) -> None:
         current = self.responsibilities.get(responsibility_id)
