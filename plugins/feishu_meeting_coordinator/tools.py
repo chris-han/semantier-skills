@@ -31,12 +31,6 @@ def _gateway(kwargs: dict[str, Any]):
     return gateway
 
 
-def _hydrate_saved_gateway_env() -> None:
-    try:
-        from agents.hermes_embedded_gateway import _hydrate_saved_feishu_gateway_env
-    except Exception:
-        return
-    _hydrate_saved_feishu_gateway_env()
 
 
 @lru_cache(maxsize=1)
@@ -388,44 +382,6 @@ class _FeishuClient:
         return _feishu_helper().get_message(message_id=message_id)
 
 
-class _CreatorDeliveryClient:
-    def send_creator_escalation(self, task: dict[str, Any]) -> dict[str, Any]:
-        delivery_binding = json.loads(str(task.get("delivery_binding_json") or "{}"))
-        payload = json.loads(str(task.get("payload_json") or "{}"))
-        hermes_home = _text(delivery_binding.get("hermes_home")) or _session_env(
-            "HERMES_SESSION_HERMES_HOME"
-        )
-        platform = _text(delivery_binding.get("platform")) or "feishu"
-        chat_id = _text(delivery_binding.get("chat_id"))
-        thread_id = _text(delivery_binding.get("thread_id"))
-        message = _text(
-            payload.get("message") or payload.get("reason") or "Meeting RSVP escalation"
-        )
-        if not hermes_home:
-            raise RuntimeError("Semantier gateway binding required")
-        if not chat_id:
-            raise RuntimeError("creator delivery binding missing chat_id")
-        target = (
-            f"{platform}:{chat_id}:{thread_id}"
-            if thread_id
-            else f"{platform}:{chat_id}"
-        )
-        from runtime_paths import bind_workspace_env
-        with bind_workspace_env(Path(hermes_home).expanduser().resolve()):
-            _hydrate_saved_gateway_env()
-            from tools.send_message_tool import send_message_tool
-
-            raw = send_message_tool(
-                {
-                    "action": "send",
-                    "target": target,
-                    "message": message,
-                }
-            )
-        result = json.loads(str(raw or "{}"))
-        if result.get("error"):
-            raise RuntimeError(str(result["error"]))
-        return result
 
 
 class _CalendarUpdateClient:

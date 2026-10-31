@@ -18,7 +18,6 @@ from . import gateway as meeting_coordinator_gateway
 from . import store as meeting_coordinator_store
 from .webapi_service import (
     MeetingCoordinatorWebApiCalendarClient,
-    meeting_coordinator_delivery_client_from_context,
 )
 
 router = APIRouter(tags=["webapi-gateway"])

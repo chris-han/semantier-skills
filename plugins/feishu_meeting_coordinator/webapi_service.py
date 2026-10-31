@@ -12,53 +12,8 @@ import sys
 
 
 
-class MeetingCoordinatorWebApiDeliveryClient:
-    def __init__(self, ctx: RequestContext):
-        self.ctx = ctx
-
-    def _hydrate_saved_gateway_env(self) -> None:
-        try:
-            from agents.hermes_embedded_gateway import _hydrate_saved_feishu_gateway_env
-        except Exception:
-            return
-        _hydrate_saved_feishu_gateway_env()
-
-    def send_creator_escalation(self, task: dict[str, Any]) -> dict[str, Any]:
-        from agents.webapi.job_service import _temporary_hermes_home
-        delivery_binding = json.loads(str(task.get("delivery_binding_json") or "{}"))
-        payload = json.loads(str(task.get("payload_json") or "{}"))
-        platform = str(delivery_binding.get("platform") or "feishu").strip()
-        chat_id = str(delivery_binding.get("chat_id") or "").strip()
-        thread_id = str(delivery_binding.get("thread_id") or "").strip()
-        message = str(
-            payload.get("message")
-            or payload.get("reason")
-            or "Meeting RSVP escalation"
-        ).strip()
-        if not chat_id:
-            raise RuntimeError("creator delivery binding missing chat_id")
-        target = f"{platform}:{chat_id}:{thread_id}" if thread_id else f"{platform}:{chat_id}"
-        with _temporary_hermes_home(str(self.ctx.hermes_home)):
-            self._hydrate_saved_gateway_env()
-            from tools.send_message_tool import send_message_tool
-
-            raw = send_message_tool(
-                {
-                    "action": "send",
-                    "target": target,
-                    "message": message,
-                }
-            )
-        result = json.loads(str(raw or "{}"))
-        if result.get("error"):
-            raise RuntimeError(str(result["error"]))
-        return result
 
 
-def meeting_coordinator_delivery_client_from_context(
-    ctx: RequestContext,
-) -> MeetingCoordinatorWebApiDeliveryClient:
-    return MeetingCoordinatorWebApiDeliveryClient(ctx)
 
 
 class MeetingCoordinatorWebApiCalendarClient:
