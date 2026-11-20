@@ -131,12 +131,13 @@ def _releases(catalog):
 
 
 def publish(catalog, prepared, store, *, expected_catalog_digest):
-    """Upload immutable artifacts, read back SHA-256, then CAS the catalog.
+    """Upload immutable artifacts, read back SHA-256, then conditionally replace the catalog.
 
     store.get(key, limit) returns bytes or None only for a confirmed missing key;
     outages must raise. put_if_absent must be atomic and never overwrite. replace
-    must atomically compare the previous catalog SHA-256 (None = absent). An OSS
-    implementation must qualify these semantics and authorization before use.
+    must compare the previous catalog SHA-256 (None = absent) within its
+    qualified serialization boundary. OSS supports the designated single-host
+    writer in official_skill_oss.py; it does not provide distributed CAS.
     prepared maps (slug, version) to explicitly prepared source directories.
     """
     raw = catalog_bytes(catalog)
