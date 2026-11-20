@@ -20,6 +20,21 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("Copyright (c) 2026 Semantier Technology", (BASE / "LICENSE").read_text())
         self.assertFalse((BASE / "plugin.yaml").exists(), "ordinary standalone skill must not masquerade as plugin")
 
+    def test_every_standalone_skill_root_has_readme(self):
+        """A human-facing README is required alongside every standalone SKILL.md."""
+        skill_roots = sorted(p.parent for p in BASE.parent.rglob("SKILL.md") if p.is_file())
+        self.assertGreaterEqual(len(skill_roots), 1)
+        for directory in skill_roots:
+            with self.subTest(skill=str(directory.relative_to(BASE.parent))):
+                readme = directory / "README.md"
+                self.assertTrue(readme.is_file(), f"missing root README.md: {readme}")
+                if not readme.is_file():
+                    continue
+                body = readme.read_text(encoding="utf-8")
+                self.assertRegex(body, r"(?m)^# .+", "README must have a human-facing title")
+                self.assertIn("[SKILL.md](SKILL.md)", body, "README must link the actual agent contract")
+                self.assertIn("official", body.lower(), "README must distinguish source from official publication")
+
     def test_all_disclosure_paths_resolve(self):
         files = [p for p in BASE.rglob("*.md") if p.is_file()]
         found = set()

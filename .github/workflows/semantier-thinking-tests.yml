@@ -3,10 +3,14 @@ on:
   push:
     paths:
       - 'skills/semantier-thinking/**'
+      - 'skills/**/SKILL.md'
+      - 'skills/**/README.md'
       - '.github/workflows/semantier-thinking-tests.yml'
   pull_request:
     paths:
       - 'skills/semantier-thinking/**'
+      - 'skills/**/SKILL.md'
+      - 'skills/**/README.md'
       - '.github/workflows/semantier-thinking-tests.yml'
 jobs:
   contract:
