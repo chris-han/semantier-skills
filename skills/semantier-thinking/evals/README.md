@@ -2,13 +2,30 @@
 
 ## What is measurable today
 
-The network-free suite checks root identity, license presence, conditional reference resolution, 20 **frozen synthetic routing oracle** cases, and the FOLIO adapter's parser, prompt conditions, scorer and lack of false model-success reporting. The 20 expected routes are *test design*, not 20 observed successful model decisions. There are no automatic model calls in CI.
+The network-free suite checks root identity, license presence, conditional reference resolution, 20 **frozen English synthetic routing oracle** cases plus bilingual paraphrase triples, and the FOLIO adapter's parser, prompt conditions, scorer and lack of false model-success reporting. The 20 expected routes are *test design*, not 20 observed successful model decisions. There are no automatic model calls in CI.
 
 From repository root:
 
     python3 -m unittest discover -s skills/semantier-thinking/evals -p 'test_*.py' -v
 
 The deterministic suite cannot demonstrate that a model actually routes correctly, uses the references, produces good reasoning, or improves human ability. Actual runtime acceptance requires skill selection in a native Hermes instance and end-to-end task outcomes, separately from Semantier Official registry publisher verification.
+
+## Chinese / English / mixed-language qualification (v0.1.1)
+
+- Source contract and independent [Chinese README](../README.zh-CN.md) explain the default reply-language policy, explicit override and quotation fidelity. [Language reference](../references/language-and-terminology.md) is conditional, not a mandatory extra skill.
+- `bilingual_pairs.json` freezes independently authored **English / Chinese / mixed-language paraphrase triples**, with one expected lead task, depth, mode and specialist route per triple. The three requests are intended to be semantically equivalent, not independently labelled ground truth. Explicit output-language overrides are separate from reasoning depth.
+- `test_bilingual.py` checks coverage of L0–L3, all three main tasks, Coach/Deliver across L1–L3, ethical and organizational specialists, locale-specific target language, and the offline evaluation adapter. **These are contract tests, not observed model answers**.
+- `bilingual_eval.py` can run a bounded *prompt-level* comparison if the operator supplies a model driver. It records reported route fields, answer text, a low-confidence Chinese-script heuristic, and matched-locale consistency. It does not perform native Hermes progressive file loading or independently judge argument correctness. Script classification is not proof of fluent, correct Chinese.
+
+From the repo root, for a no-model data smoke:
+
+    python3 skills/semantier-thinking/evals/bilingual_eval.py --limit 6
+
+For a separately authorized model driver (may incur network/model cost):
+
+    python3 skills/semantier-thinking/evals/bilingual_eval.py --limit 6 --driver 'python3 /path/to/your_route_driver.py' --out /path/to/bilingual-results.json
+
+The driver reads one UTF-8 JSON object on stdin with `messages`, `case_id`, `locale`, `condition` and returns JSON containing `lead`, `depth`, `mode`, `specialists`, `ask_user` and `answer`. All errors count toward the full denominator. Keep driver model/harness/version, prompts, decoding settings, timestamps and output intact for evaluation; do not substitute an oracle stub and call it model performance. This benchmark is a controlled prompt-level probe only, **not** a production skill-activation or human-learning result.
 
 ## Behavioral routing evaluation (not run by CI)
 

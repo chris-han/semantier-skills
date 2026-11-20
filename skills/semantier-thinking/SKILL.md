@@ -1,17 +1,23 @@
 ---
 name: semantier--semantier-thinking
 description: Use when a user asks to critically examine a belief, evidence, interpretation, consequential choice, proposal, argument, or draft; or explicitly wants to practice thinking. Progressively route inquiry, decision, or writing at L0–L3 depth, loading ethical or organizational methods only if needed. Do not activate for routine factual answers or settled execution work without a material reasoning gap.
-version: "0.1.0"
+version: "0.1.1"
 author: Semantier
 metadata:
   semantier:
     category: reasoning
-    tags: [critical-thinking, inquiry, decision, writing, ethics, organizations]
+    tags: [critical-thinking, inquiry, decision, writing, ethics, organizations, chinese, bilingual]
 ---
 
 # Semantier Thinking — Progressive Critical Thinking
 
 **Outcome:** help people reach better-supported, inspectable and revisable understandings, decisions and arguments, or complete written work. No thinking framework guarantees correctness. Preserve the user's agency and distinguish what is observed, inferred, assumed, valued or unknown.
+
+## Language and source-fidelity rule
+
+Respond in the user's requested language; otherwise use the language of the user's active request (Chinese → Chinese; English → English). For mixed-language input, follow the explicit output-language instruction if any; otherwise use the language of the user's question/instructions rather than the language of quoted source material. Do **not** ask users to choose a language when it is clear. Keep the same task, depth, mode, epistemic standards and stop criteria across languages.
+
+Preserve exact quoted passages, source locators, dates, numbers, named entities and cited terminology in their original language; translate or explain **around** them without inventing a new source quotation. Explain specialist terms in idiomatic Chinese when responding in Chinese (English term at first use only if it adds clarity). Load [Chinese and multilingual reasoning guidance](references/language-and-terminology.md) only for source-language conflicts, substantial Chinese argument/writing work, or terminology ambiguity. Do not translate whole reference files just to answer a routine question.
 
 ## Entry and adaptive route
 

@@ -16,7 +16,7 @@ class SkillContractTests(unittest.TestCase):
     def test_source_identity_and_license(self):
         root = (BASE / "SKILL.md").read_text(encoding="utf-8")
         self.assertRegex(root, r"(?m)^name: semantier--semantier-thinking$")
-        self.assertRegex(root, r'(?m)^version: "0\.1\.0"$')
+        self.assertRegex(root, r'(?m)^version: "0\.1\.1"$')
         self.assertIn("Copyright (c) 2026 Semantier Technology", (BASE / "LICENSE").read_text())
         self.assertFalse((BASE / "plugin.yaml").exists(), "ordinary standalone skill must not masquerade as plugin")
 

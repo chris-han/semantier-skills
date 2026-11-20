@@ -1,10 +1,14 @@
 # Semantier Thinking
 
+[简体中文说明 / Chinese README](README.zh-CN.md)
+
+English, Simplified Chinese, and mixed-language questions are supported by the **same** reasoning workflows. The user’s requested response language takes priority; otherwise answer in the language of their request, not in the language of an attached quotation. Original source quotations and locators remain verbatim. This is a source-level behavior contract, not yet proof of model-language parity.
+
 A progressive critical-thinking skill for Semantier and compatible Hermes skill loaders. It helps users examine claims and evidence, make defensible decisions, improve arguments and writing, or practice independent reasoning without forcing a full audit on every question.
 
 **Skill ID (source):** `semantier/semantier/semantier-thinking`  
 **Installed name:** `semantier--semantier-thinking`  
-**Source version:** `0.1.0`  
+**Source version:** `0.1.1`  
 **Author / copyright:** Semantier Technology; see [LICENSE](LICENSE).
 
 ## How it works
@@ -33,6 +37,7 @@ Depth can increase **or decrease** as evidence changes. Stop when the result is 
 ## Package contents
 
 - [SKILL.md](SKILL.md) — compact Agent entry and critical epistemic boundaries
+- [Chinese and bilingual usage](references/language-and-terminology.md) — response-language choice, terminology, quotation fidelity and cross-language scope
 - [Depth routing](references/depth-routing.md) — escalation, de-escalation and stopping rules
 - [Inquiry](references/critical-inquiry.md), [decision](references/decision-reasoning.md) and [writing](references/argument-writing.md) — lead task workflows
 - [Ethical](references/ethical-reasoning.md) and [organizational](references/organizational-reasoning.md) — optional specialist workflows
@@ -50,6 +55,13 @@ Reference files load progressively; do not pre-load the entire package for simpl
 - “Help me practice the reasoning myself; ask one important question at a time.”
 - “Analyze whether this management policy is fair, and which organizational incentives could defeat it.”
 
+## Chinese examples
+
+- “这个实验只是前后对比，能证明 AI 导致效率提升吗？请指出最关键的证据缺口。”
+- “在总预算不能超出的约束下比较两个方案，给出可修正的建议。”
+- “请审查这份英文 memo 的逻辑，但用中文解释，并保留英文原文引号和数字。”
+- “请一轮只问我一个问题，帮助我自己检验判断。”
+
 ## Testing
 
 From the repository root:
@@ -58,7 +70,7 @@ From the repository root:
 python3 -m unittest discover -s skills/semantier-thinking/evals -p 'test_*.py' -v
 ```
 
-The offline tests validate package contracts, scenario-oracle coverage and the FOLIO benchmark adapter. The synthetic scenario routes are **expected labels**, not observed model successes. The [FOLIO evaluator](evals/README.md) requires an independently supplied dataset and an authorized model driver to produce baseline-vs-skill accuracy. No deterministic check establishes real reasoning improvement.
+The offline tests validate package contracts, the English and bilingual scenario-oracle coverage, and both the bilingual and FOLIO benchmark adapters. The synthetic scenario routes are **expected labels**, not observed model successes. The [FOLIO evaluator](evals/README.md) requires an independently supplied dataset and an authorized model driver to produce baseline-vs-skill accuracy. No deterministic check establishes real reasoning improvement.
 
 ## Source vs official distribution
 
