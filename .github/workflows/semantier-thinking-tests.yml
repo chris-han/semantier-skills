@@ -1,0 +1,20 @@
+name: semantier-thinking source contract
+on:
+  push:
+    paths:
+      - 'skills/semantier-thinking/**'
+      - '.github/workflows/semantier-thinking-tests.yml'
+  pull_request:
+    paths:
+      - 'skills/semantier-thinking/**'
+      - '.github/workflows/semantier-thinking-tests.yml'
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate source identity, progressive references and offline benchmark adapter
+        run: python3 -m unittest discover -s skills/semantier-thinking/evals -p 'test_*.py' -v
