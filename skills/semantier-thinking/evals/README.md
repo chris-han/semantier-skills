@@ -16,7 +16,7 @@ Use `scenarios.json` as an oracle to score **observed** model routing outputs on
 
 ## FOLIO natural-language logical entailment — optional public benchmark
 
-Pinned source: [Yale-LILY/FOLIO](https://github.com/Yale-LILY/FOLIO), commit `5d7bb84c7edab3fb358e057d2807f19cf5e2d`, split `data/v0.0/folio-validation.jsonl`, **CC BY-SA 4.0**. This early split contains known annotation imperfections; the repository explicitly points to an updated Hugging Face version. We do **not** vendor FOLIO or relabel its contents under this skill's MIT license. When obtaining the full dataset, retrieve from the pinned source and comply with FOLIO's terms.
+Pinned source: [Yale-LILY/FOLIO](https://github.com/Yale-LILY/FOLIO), commit `5d7bb84c7edab3fb358e057d2807f19cf5cf5e2d`, split `data/v0.0/folio-validation.jsonl`, **CC BY-SA 4.0**. This early split contains known annotation imperfections; the repository explicitly points to an updated Hugging Face version. We do **not** vendor FOLIO or relabel its contents under this skill's MIT license. When obtaining the full dataset, retrieve from the pinned source and comply with FOLIO's terms.
 
 Given an independently obtained local dataset:
 

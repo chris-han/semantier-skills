@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LABELS = {"True", "False", "Uncertain"}
 PINNED_REPO = "Yale-LILY/FOLIO"
-PINNED_COMMIT = "5d7bb84c7edab3fb358e057d2807f19cf5e2d"
+PINNED_COMMIT = "5d7bb84c7edab3fb358e057d2807f19cf5cf5e2d"
 PINNED_PATH = "data/v0.0/folio-validation.jsonl"
 
 
