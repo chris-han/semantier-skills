@@ -50,10 +50,6 @@ def main():
     print(json.dumps(inventory(args.root, slug=args.slug, version=args.version, license_id=args.license, source_commit=args.source_commit), sort_keys=True, indent=2))
 
 
-if __name__ == '__main__':
-    main()
-
-
 def signed_envelope(payload, *, key_id, signer):
     """Offline serialization seam; caller owns admitted signing capability.
 
@@ -63,3 +59,7 @@ def signed_envelope(payload, *, key_id, signer):
     import base64
     raw = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()
     return {'schema': 1, 'key_id': key_id, 'payload_b64': base64.b64encode(raw).decode(), 'signature_b64': base64.b64encode(signer(raw)).decode()}
+
+
+if __name__ == '__main__':
+    main()
