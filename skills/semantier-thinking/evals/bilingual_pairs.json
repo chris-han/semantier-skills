@@ -1,0 +1,516 @@
+[
+  {
+    "id": "B01",
+    "expected": {
+      "lead": "none",
+      "depth": "L0",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Sort the dates 2026-10-12, 2026-03-01 and 2026-08-03 from earliest to latest, with one brief explanation.",
+      "zh": "请把 2026-10-12、2026-03-01、2026-08-03 按从早到晚排列，并简单说明。",
+      "mixed": "把 dates: 2026-10-12, 2026-03-01, 2026-08-03 从 earliest 到 latest 排列，用中文简述。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "simple date ordering is not an argument audit"
+  },
+  {
+    "id": "B02",
+    "expected": {
+      "lead": "none",
+      "depth": "L0",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Correct only the spelling in 'Teh report is ready.' and explain the correction in one English sentence.",
+      "zh": "只修正 'Teh report is ready.' 的英文拼写错误，并用一句中文解释改动。",
+      "mixed": "Proofread 'Teh report is ready.' only；请用中文解释拼写改动，不审查观点。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "simple copy edit must not activate a substantive analysis"
+  },
+  {
+    "id": "B03",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L1",
+      "mode": "coach",
+      "specialists": [],
+      "ask_user": true
+    },
+    "requests": {
+      "en": "My colleague has not replied for two days, therefore they dislike me. Help me test that inference, asking just one question per turn.",
+      "zh": "同事两天没回复我，所以他肯定讨厌我。请引导我检验这个推断，每轮只问一个问题。",
+      "mixed": "My colleague 两天没回信息，所以肯定 dislike me。请用中文每轮只问一个关键问题来检验。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "unverified motive inference with explicit coaching"
+  },
+  {
+    "id": "B04",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L1",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Our sales rose after a new slogan; does that alone prove the slogan caused the increase? Brief answer.",
+      "zh": "换了新广告语之后销售额上升，仅凭这一点能证明广告语带来了增长吗？请简答。",
+      "mixed": "Sales 在换 slogan 后增长，这 alone 能证明因果关系吗？用中文简短回答。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "single correlation-versus-causation gap"
+  },
+  {
+    "id": "B05",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L2",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "The AI-assisted team closed more tickets but also received extra training. Examine whether AI caused the increase.",
+      "zh": "使用 AI 的团队关闭了更多工单，但同时接受了额外培训。请分析是否能归因于 AI。",
+      "mixed": "AI team 关闭 tickets 更多，但有 extra training；请用中文分析 AI 是否真正导致提升。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "material confounder needs alternatives and evidence"
+  },
+  {
+    "id": "B06",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L2",
+      "mode": "coach",
+      "specialists": [],
+      "ask_user": true
+    },
+    "requests": {
+      "en": "Coach me, one question at a time, to evaluate whether new tutoring caused higher scores when the curriculum also changed.",
+      "zh": "新辅导计划后成绩提高，但课程大纲也改了。请每轮只问一个问题，引导我自己分析因果关系。",
+      "mixed": "Tutoring 之后 scores 上升，但 curriculum 也变化了；请用中文一轮只问一个问题。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "causal investigation requested as coached reasoning"
+  },
+  {
+    "id": "B07",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L3",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Before a nationwide policy decision, audit two conflicting research studies thoroughly; note any missing primary documents.",
+      "zh": "全国性政策决策前，请深度审计两项结论冲突的研究，并说明缺失哪些一手资料。",
+      "mixed": "请在 nationwide policy 决策前做 full evidence audit：two studies 结果冲突，并标明缺失的 primary sources。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "high-consequence full evidence audit explicitly requested"
+  },
+  {
+    "id": "B08",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L3",
+      "mode": "coach",
+      "specialists": [],
+      "ask_user": true
+    },
+    "requests": {
+      "en": "Train me to perform a deep audit of a contested research claim. Use one probing question per turn.",
+      "zh": "请训练我对存在争议的研究主张进行深度审计，每一轮只提出一个有辨别力的问题。",
+      "mixed": "Coach 我做 contested claim 的 L3 审计，每轮用中文只问一个 probing question。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "explicit deep coached audit without forcing immediate verdict"
+  },
+  {
+    "id": "B09",
+    "expected": {
+      "lead": "decision",
+      "depth": "L1",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Choose a software option from the given list without exceeding our hard $1,000 budget at any listed usage level.",
+      "zh": "请从给定软件方案中选择一个，要求在列出的所有用量水平下总成本都不超过 1000 美元。",
+      "mixed": "从 software options 中挑选方案；hard budget = $1,000，所有 usage level 均不能超，中文回答。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "hard-constraint elimination"
+  },
+  {
+    "id": "B10",
+    "expected": {
+      "lead": "decision",
+      "depth": "L1",
+      "mode": "coach",
+      "specialists": [],
+      "ask_user": true
+    },
+    "requests": {
+      "en": "Help me practice making a low-stakes reversible choice between two meeting times. Ask one meaningful question first.",
+      "zh": "我要练习在两个容易更改的会议时间中做选择，请先只问我一个关键问题。",
+      "mixed": "两个 meeting slots 都可撤回；请用 Coach 模式先问一个真正关键的中文问题。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "light reversible choice with explicit practice"
+  },
+  {
+    "id": "B11",
+    "expected": {
+      "lead": "decision",
+      "depth": "L2",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": true
+    },
+    "requests": {
+      "en": "Should I take a higher-paying job with a two-hour commute or keep my local job? I have not said how I value time.",
+      "zh": "应该选择薪水更高但通勤两小时的工作，还是保留本地工作？我还没说明时间对我有多重要。",
+      "mixed": "Higher salary but commute 两小时 vs local job；我没给时间价值权重，请用中文帮助比较。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "missing value preference can change a personal decision"
+  },
+  {
+    "id": "B12",
+    "expected": {
+      "lead": "decision",
+      "depth": "L2",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Compare an irreversible vendor contract against a reversible pilot when recovery costs are uncertain.",
+      "zh": "在恢复成本尚不明确的情况下，比较不可逆的供应商长期合同与可撤回的试点。",
+      "mixed": "Vendor long-term lock-in 不可逆，pilot 可回退，但 recovery cost 未知；请用中文比较。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "decision reversibility and uncertainty"
+  },
+  {
+    "id": "B13",
+    "expected": {
+      "lead": "decision",
+      "depth": "L3",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Before an irreversible national deployment, perform a full pre-mortem, constraint and assurance audit.",
+      "zh": "在进行不可逆的全国部署前，请完成事前验尸、硬约束和可靠性方面的深度审计。",
+      "mixed": "Nationwide deployment 不可逆，请做完整 pre-mortem + constraints + assurance 审计，用中文。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "irreversible high-stakes full audit"
+  },
+  {
+    "id": "B14",
+    "expected": {
+      "lead": "decision",
+      "depth": "L3",
+      "mode": "coach",
+      "specialists": [],
+      "ask_user": true
+    },
+    "requests": {
+      "en": "Teach me to deeply audit a difficult irreversible investment decision, one question at a time, rather than deciding for me.",
+      "zh": "请引导我深度审计一项难以撤销的投资决策，每轮只问一个问题，不要替我作出决定。",
+      "mixed": "Coach 我做不可逆 investment 的 deep audit，一轮只问一个中文问题，不要替我拍板。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "high-stakes coach mode distinct from audit depth"
+  },
+  {
+    "id": "B15",
+    "expected": {
+      "lead": "writing",
+      "depth": "L1",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Rewrite 'The correlation proves causation' as one defensible sentence; keep it concise.",
+      "zh": "把“存在相关性，因此证明了因果关系”改写成一句证据支持得住的话，保持简洁。",
+      "mixed": "将 'Correlation proves causation' 改写为一句更严谨的中文，避免过度断言。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "bounded argument wording repair"
+  },
+  {
+    "id": "B16",
+    "expected": {
+      "lead": "writing",
+      "depth": "L2",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Rewrite the remote-work memo so it supports a limited pilot, but does not claim the observational results proved causation.",
+      "zh": "请改写远程办公备忘录，支持有限试点，但不要把观察性结果说成已证实因果关系。",
+      "mixed": "请把 remote-work memo 改为支持 limited pilot 的中文成稿；observational data 不可写成因果证明。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "complete argued draft with evidence qualifiers"
+  },
+  {
+    "id": "B17",
+    "expected": {
+      "lead": "writing",
+      "depth": "L2",
+      "mode": "coach",
+      "specialists": [],
+      "ask_user": true
+    },
+    "requests": {
+      "en": "Help me improve my argument for the pilot by asking one question at a time, rather than drafting it for me.",
+      "zh": "我想自己改进支持试点的论证，请每次只问一个关键问题，不要替我写完。",
+      "mixed": "我想自己写 pilot argument；请用中文 Coach，一轮问一个关键问题。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "writing coach retains user authorship"
+  },
+  {
+    "id": "B18",
+    "expected": {
+      "lead": "writing",
+      "depth": "L3",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Perform a complete source-grounded audit of a board memo's warrants and rebuttals, then deliver corrected prose.",
+      "zh": "请全面审计董事会备忘录的证据来源、隐含推理与反驳，并交付修订后的完整文字。",
+      "mixed": "Board memo 需要 full audit：sources、warrants、rebuttals；用中文交付修订成稿。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "deep argument audit with writing deliverable"
+  },
+  {
+    "id": "B19",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L1",
+      "mode": "deliver",
+      "specialists": [
+        "ethical"
+      ],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Explain briefly why a long-standing practice can be legal but still morally wrong.",
+      "zh": "请简要解释：一项长期存在的惯例为什么可能合法，但仍不合乎道德？",
+      "mixed": "一种 customary practice 可能 legal 却 morally wrong 吗？请用中文简要解释。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "narrow legal-versus-ethical distinction"
+  },
+  {
+    "id": "B20",
+    "expected": {
+      "lead": "decision",
+      "depth": "L2",
+      "mode": "deliver",
+      "specialists": [
+        "ethical"
+      ],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Should a company launch employee monitoring without clear consent, even if local law permits it? Analyze the ethical tradeoff.",
+      "zh": "即便当地法律允许，企业是否应该在没有明确同意的情况下监控员工？分析伦理权衡。",
+      "mixed": "Employee monitoring 即使 legal，缺少 informed consent；请用中文分析是否应上线。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "material rights and consent conflict"
+  },
+  {
+    "id": "B21",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L2",
+      "mode": "deliver",
+      "specialists": [
+        "organizational"
+      ],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Teams repeatedly game the same KPI. What incentives or feedback mechanisms could explain the pattern?",
+      "zh": "团队反复钻同一个绩效指标的空子。哪些激励机制或反馈关系可能解释这一现象？",
+      "mixed": "团队反复 game the KPI，背后可能有什么 incentives 和 feedback loops？中文分析。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "recurrent organization mechanism"
+  },
+  {
+    "id": "B22",
+    "expected": {
+      "lead": "decision",
+      "depth": "L3",
+      "mode": "deliver",
+      "specialists": [
+        "ethical",
+        "organizational"
+      ],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Deeply audit an organization-wide reporting policy that distorts incentives and may violate employees' rights. Recommend a defensible action.",
+      "zh": "全面审计一项既扭曲组织激励、又可能侵害员工权利的全公司汇报制度，并提出有依据的行动建议。",
+      "mixed": "请对 org reporting policy 做 full audit：incentive distortion + employee rights conflict；中文给出条件性建议。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "organizational mechanism and rights are separately material"
+  },
+  {
+    "id": "B23",
+    "expected": {
+      "lead": "writing",
+      "depth": "L2",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Rewrite this statement cautiously and reproduce the exact original quote: 'This proves AI caused the gain.' The study was observational.",
+      "zh": "这项研究只是观察性研究。请谨慎改写结论，并保留原文引号中的完整英文句子：'This proves AI caused the gain.'",
+      "mixed": "Observational study 不能证明因果。请用中文改写，并原样引用：'This proves AI caused the gain.'"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "zh",
+      "mixed": "zh"
+    },
+    "reason": "quotation fidelity across source and response languages",
+    "preserve_quote": "This proves AI caused the gain."
+  },
+  {
+    "id": "B24",
+    "expected": {
+      "lead": "inquiry",
+      "depth": "L1",
+      "mode": "deliver",
+      "specialists": [],
+      "ask_user": false
+    },
+    "requests": {
+      "en": "Reply in English. Is the statement 'every change followed by improvement proves causation' logically justified? Briefly explain.",
+      "zh": "请用英文回答：声称“每次改革后指标改善都证明改革带来了变化”，是否有逻辑依据？简要说明。",
+      "mixed": "请 answer in English：改革之后 metrics improve 就必然证明 causation 吗？简要解释。"
+    },
+    "response_language": {
+      "en": "en",
+      "zh": "en",
+      "mixed": "en"
+    },
+    "reason": "explicit output-language override across request languages"
+  }
+]

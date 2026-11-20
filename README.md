@@ -15,6 +15,15 @@ Plugin authoring guidance lives in [docs/derived/semantier-marketplace-plugin-cr
 - `tender_review_journey`
 - `resilient_public_data_collection`
 
+## Standalone Skill Packages
+
+Each standalone package under `skills/**/` must keep a human-facing `README.md` next to the loader-facing `SKILL.md`. The README explains scope, entry points, tests, license/attribution and verified release status; the SKILL.md remains the concise agent execution contract.
+
+- [Semantier Thinking](skills/semantier-thinking/README.md) — progressive inquiry, decision, writing, ethics and organizational reasoning.
+- [Threat Intelligence and CVE](skills/security/threat-intel-cve/README.md) — software vulnerability assessment (source candidate; licensing and official release qualification outstanding).
+
+**Distribution boundary:** `marketplace/index.json` is the legacy plugin index, not the signed standalone-skill registry. The proposed Semantier Official endpoint is `https://assets.semantier.cn/skills/v1/catalog.json`; GitHub availability does not establish a signed production release or verified HTTPS endpoint.
+
 ## Plugin Layout
 
 The Feishu meeting coordinator is distributed as one plugin package. The plugin
@@ -85,7 +94,9 @@ advertised as a marketplace-installable package.
 
 ## Marketplace URL
 
-Use this repository URL directly in the Skills screen marketplace URL setting:
+The following URL is for an existing **GitHub source** integration, not the cryptographically verified Semantier Official standalone-skill source. The latter requires a signed catalog and independently qualified releases.
+
+Use this repository URL directly in a GitHub-source marketplace URL setting:
 
 ```text
 https://github.com/chris-han/semantier-skills
