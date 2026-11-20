@@ -1,6 +1,6 @@
 ---
 name: semantier--semantier-thinking
-description: Use when a user asks to critically examine a belief, evidence, interpretation, consequential choice, proposal, argument, or draft; or explicitly wants to practice thinking. Progressively route inquiry, decision, or writing at L0–L3 depth, loading ethical or organizational methods only if needed. Do not activate for routine factual answers or settled execution work without a material reasoning gap.
+description: Use when a user asks to critically examine a belief, evidence, interpretation, consequential choice, proposal, argument, or draft; or explicitly wants to practice thinking. Progressively route inquiry, decision, or writing at L0–L3 depth, loading ethical or organizational methods only if needed. Do not activate for routine factual answers or settled execution work without a material reasoning gap. 中文适用：思辨、批判性思维、证据查证、决策推理、论证审计、伦理判断、组织分析。
 version: "0.1.1"
 author: Semantier
 metadata:

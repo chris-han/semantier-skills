@@ -81,6 +81,8 @@ class BilingualContractTests(unittest.TestCase):
         english = (ROOT / "README.md").read_text(encoding="utf-8")
         chinese = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
         self.assertIn("Respond in the user's requested language", root)
+        self.assertIn("批判性思维", root.split("---", 2)[1])
+        self.assertIn("证据查证", root.split("---", 2)[1])
         self.assertIn("Keep the same task, depth, mode", root)
         self.assertIn("quotation", guidance)
         self.assertIn("反证", guidance)
