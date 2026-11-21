@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-**源码版本：** 0.1.1  
+**源码版本：** 0.1.2  
 **技能标识：** `semantier/semantier/semantier-thinking`  
 **Hermes 安装名称：** `semantier--semantier-thinking`  
 **著作权：** Semantier Technology，详见 [LICENSE](LICENSE)。
@@ -39,6 +39,8 @@
 | L3 | 深度审计重要依据、强反例、后果和改判条件 |
 
 **Deliver（交付）**与**Coach（引导练习）**是独立于深度的模式。Coach 通常每轮只问一个真正有辨别力的问题；用户希望直接得到成果时，不强制进行教学。发现新证据后，可升级或降低审计深度，避免重复工作。
+
+若研究或执行中途出现足以改变归因的质疑，可按需使用[归因与修订流程](references/diagnostic-revision.md)：区分原始结果与解释，选择一项有辨别力的检查，将机械修复交回原专业能力，再根据返回证据修订结论。它不替代普通调试，不改写历史结果，也不自动晋升元学习方法。
 
 ## 使用示例
 

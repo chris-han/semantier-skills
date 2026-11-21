@@ -15,6 +15,7 @@ Carry, in existing task context or authored artifact:
 | Values/constraints | Owner's stated priorities, obligations and hard limits |
 | Unknowns | Which missing facts could flip conclusion; CANNOT_ASSESS vs FALSE |
 | Conclusion | Supported recommendation/argument, qualification and revision trigger |
+| Intervention & return observation | If a specialist is needed: proposed factor to change, unchanged basis, actual diff/action, observed result and remaining gap |
 
 Traceability invariants:
 - A “reported” claim cannot become “verified” merely because another skill restates it.
@@ -22,3 +23,5 @@ Traceability invariants:
 - Agent interpretation is not domain authority, statutory interpretation, signer provenance or independent benchmark gold.
 - Route to a new skill only if its distinct inquiry changes the finish condition. Otherwise continue current work.
 - An updated source triggers selective revision of dependent claims, not blanket deletion or automatic reversal of unaffected information.
+- In a diagnostic handoff, retain the original candidate/result and exposure history; a retrospective fix is a new observation, not a replacement of a sealed experiment.
+- Attribute a return observation to the actual human question, model proposal, deterministic tool or specialist intervention; do not credit an agent with a human-authored repair.

@@ -89,7 +89,7 @@ class BilingualContractTests(unittest.TestCase):
         self.assertIn("[简体中文说明 / Chinese README](README.zh-CN.md)", english)
         self.assertIn("[SKILL.md](SKILL.md)", chinese)
         self.assertIn("官方", chinese)
-        self.assertIn("0.1.1", chinese)
+        self.assertIn("0.1.2", chinese)
 
     def test_script_heuristic_has_known_false_negatives(self):
         self.assertEqual(script_heuristic("这是一个需要补充证据的判断。"), "zh")

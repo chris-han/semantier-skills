@@ -1,7 +1,7 @@
 ---
 name: semantier--semantier-thinking
-description: Use when a user asks to critically examine a belief, evidence, interpretation, consequential choice, proposal, argument, or draft; or explicitly wants to practice thinking. Progressively route inquiry, decision, or writing at L0–L3 depth, loading ethical or organizational methods only if needed. Do not activate for routine factual answers or settled execution work without a material reasoning gap. 中文适用：思辨、批判性思维、证据查证、决策推理、论证审计、伦理判断、组织分析。
-version: "0.1.1"
+description: Use when a user asks to examine a claim, evidence, interpretation, consequential decision, argument, or draft, or when new evidence materially challenges an earlier inference mid-task. Route inquiry, decision, or writing at proportionate depth. Do not activate for routine debugging, factual answers, or settled execution without a disputed inference. 中文：思辨、批判性思维、证据查证、结论反思、决策推理、论证审计。
+version: "0.1.2"
 author: Semantier
 metadata:
   semantier:
@@ -26,7 +26,8 @@ Preserve exact quoted passages, source locators, dates, numbers, named entities 
 3. **Set provisional depth:** **L0** direct completion; **L1** one material premise or inference check; **L2** structured evidence, assumptions, alternatives and uncertainties; **L3** comprehensive, source-grounded adversarial audit when expressly requested or justified by substantial, hard-to-reverse consequences. See [depth routing](references/depth-routing.md) only if the distinction or transition is unclear. Stakes influence depth but cannot manufacture unavailable evidence.
 4. **Select interaction independently:** **Deliver** completes the requested work; **Coach** helps the user make the next reasoning move and gives feedback. Do not force coaching when the user wants a result. In Coach mode ask one relevant question per turn, unless the user requests a different pace.
 5. **Load only the lead workflow:** [inquiry](references/critical-inquiry.md), [decision](references/decision-reasoning.md), or [writing](references/argument-writing.md). If and only if a specific unresolved issue requires it, load [ethics](references/ethical-reasoning.md) and/or [organizations](references/organizational-reasoning.md). Reconsider the route after *material new information*, not every sentence.
-6. **Inspect, update, stop.** Begin with the smallest check likely to change the result; deepen only for a named gap, de-escalate once the gap closes, and stop when additional analysis lacks decision value or necessary evidence is unavailable. Finish the answer, decision or deliverable; show material evidence, exceptions and revision conditions, not performative frameworks.
+6. **Re-enter on a material challenge, not every failure.** When a new observation, user objection or failed intervention contests a load-bearing inference mid-task, check whether the result proves only that a **candidate** failed rather than a broader method. **Answer from sufficient user-supplied facts conditionally before seeking unavailable source files**; request originals only when independent verification is essential to the actual task. Inspect the current candidate and interface before recommending a broader benchmark. If competing causal explanations require a diagnostic check or cross-owner repair/return, load [attribution and revision](references/diagnostic-revision.md) conditionally. Ordinary established debugging stays with its existing specialist; do not replace the task's lead execution skill with a permanent thinking wrapper.
+7. **Inspect, update, stop.** Begin with the smallest check likely to change the result; deepen only for a named gap, de-escalate once the gap closes, and stop when additional analysis lacks decision value or necessary evidence is unavailable. Keep original results intact when later evidence changes interpretation. Complete the requested work; a successful local correction does not by itself qualify a general learning-policy change.
 
 ## Non-negotiable epistemic boundaries
 
@@ -34,6 +35,7 @@ Preserve exact quoted passages, source locators, dates, numbers, named entities 
 - Distinguish **reported source fact**, **independently verified fact**, **interpretation**, **inferred warrant**, **preference/value**, and **unknown**. An unverified source statement stays unverified across handoffs.
 - When auditing provided text, locate each consequential finding in the text. Preserve author wording and modality. Constructed links are labelled **analyst reconstruction**; do not attribute them to the author.
 - Audit AI-generated claims as observable outputs. Do not claim to reconstruct a model's actual hidden reasoning from its explanation, or treat agreement from another model as independent factual corroboration.
+- When a user supplies a concrete premise from a source you cannot open, offer a clearly **conditional** analysis rather than asking for files that are unnecessary to the requested reasoning; label what has not been independently verified.
 - Neither the user nor the assistant must generate a defect, bias, counterargument or false balance to appear thoughtful. “No material issue found in the checked scope” is a legitimate conclusion, not proof of perfection.
 - Treat ethics as a normative problem, separate from what is legally required. Do not fabricate probability, motives, laws, causal identification, citations, confidence percentages or stakeholder views.
 - Do not infer a personality diagnosis from a disputed argument; consider direct observation, alternative explanations and limits of access to others' intentions.

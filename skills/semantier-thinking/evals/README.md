@@ -10,7 +10,7 @@ From repository root:
 
 The deterministic suite cannot demonstrate that a model actually routes correctly, uses the references, produces good reasoning, or improves human ability. Actual runtime acceptance requires skill selection in a native Hermes instance and end-to-end task outcomes, separately from Semantier Official registry publisher verification.
 
-## Chinese / English / mixed-language qualification (v0.1.1)
+## Chinese / English / mixed-language qualification (v0.1.2)
 
 - Source contract and independent [Chinese README](../README.zh-CN.md) explain the default reply-language policy, explicit override and quotation fidelity. [Language reference](../references/language-and-terminology.md) is conditional, not a mandatory extra skill.
 - `bilingual_pairs.json` freezes independently authored **English / Chinese / mixed-language paraphrase triples**, with one expected lead task, depth, mode and specialist route per triple. The three requests are intended to be semantically equivalent, not independently labelled ground truth. Explicit output-language overrides are separate from reasoning depth.
@@ -30,6 +30,19 @@ The driver reads one UTF-8 JSON object on stdin with `messages`, `case_id`, `loc
 ## Behavioral routing evaluation (not run by CI)
 
 Use `scenarios.json` as an oracle to score **observed** model routing outputs on an independently selected harness. Collect the candidate's initial `lead`, `depth`, `mode`, `specialists`, whether it asks the user, whether it produces the requested artifact, and the route changes after material updates. Evaluate negative activation, risk proportionality, specialist collisions, stop choice and unverified-to-verified source promotion. Prefer paired **baseline without skill vs candidate with skill** using the same model, cases and settings. Include model/harness identity, result date and denominator; do not relabel manually presumed routes as measured PASS.
+
+The eight `recovery_scenarios.json` cases are **new author-designed, exposed routing/transition oracles** for disputed conclusions, candidate-vs-method scope, missing binding, residual branching, wrong-reason UNKNOWN, legitimate uncertainty, ordinary debugging and STOP. `test_recovery_contract.py` checks source contract and fixture coverage; it cannot establish native Hermes activation or real multi-step behavior. Before an efficacy claim, compare v0.1.1 vs v0.1.2 on the same model/harness/budget and new source-independent multistep tasks, capture actual trigger and reference loads (not self-reported labels), and measure whether the specialist return updates the conclusion. The exposed E3-R1 teaching case is regression material only.
+
+**2026-11-21 bounded native diagnostic (NOT QUALIFIED):** `native_reentry_probe.py` was run through actual Hermes `AIAgent` with the configured `qwen3.5-plus` DEVELOPMENT model, isolated temporary skill homes, one v0.1.1 source-pinned baseline and one local v0.1.2 candidate, and **only** the `skills` toolset. `skill_view` was observed in both arms and `references/diagnostic-revision.md` was loaded in one candidate run. Both versions distinguished candidate failure from method falsification, but neither reliably handled the second turn using the supplied predicate facts alone: requests for additional source/file access persisted. A candidate-only control run for a settled typo did **not** load skill content, although it attempted `skills_list`. This limited, already-exposed same-conversation probe is a **negative/inconclusive signal for complete behavioral improvement**; no independent efficacy, generalization or production claim follows. The model serving revision, exact charge and full provider cost are UNKNOWN. The skill-only tool set was intentionally unable to read arbitrary source files, so the failure is not evidence that a full-tool Hermes deployment has identical behavior.
+
+To rerun a **bounded, development-only** native probe (not CI or release qualification), from `semantier-skills` with the sibling Semantier runtime and its already-configured DEVELOPMENT route:
+
+```sh
+../.venv/bin/python skills/semantier-thinking/evals/native_reentry_probe.py --arm both --scenario recovery --turns 2
+../.venv/bin/python skills/semantier-thinking/evals/native_reentry_probe.py --arm after --scenario control --turns 1
+```
+
+These commands make real model calls and may incur charges. They print only bounded tool-event metadata and answer excerpts; they do not establish native Windows install, real-editor return flow or official registry publication. The script is a local research diagnostic, not a release prerequisite.
 
 ## FOLIO natural-language logical entailment — optional public benchmark
 

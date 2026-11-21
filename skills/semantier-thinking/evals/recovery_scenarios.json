@@ -1,0 +1,66 @@
+[
+  {
+    "id": "R01",
+    "state": "disputed_inference",
+    "user_turn": "We just concluded this agentic workflow idea is ineffective because one candidate scored badly. But does that result disprove the method? Check the attribution.",
+    "activate": true,
+    "expected_action": "scope the tested candidate; identify alternative explanations; choose one discriminating check without reopening sealed scores",
+    "expected_claim": "bounded"
+  },
+  {
+    "id": "R02",
+    "state": "candidate_vs_method",
+    "user_turn": "A candidate failed on four frozen cases and deterministic repair won. Does this prove that no learned workflow can work?",
+    "activate": true,
+    "expected_action": "distinguish candidate result from broad method claim; preserve original disposition; retain non-tested baselines",
+    "expected_claim": "bounded"
+  },
+  {
+    "id": "R03",
+    "state": "binding_defect",
+    "user_turn": "The agent added conditionRef=missing_evidence_false but the input only declares missing_evidence. Is the issue model reasoning or an unbound condition?",
+    "activate": true,
+    "expected_action": "inspect execution contract and distinguish derived intent from executable predicate binding; route mechanics to owner",
+    "expected_claim": "bounded"
+  },
+  {
+    "id": "R04",
+    "state": "residual_branch",
+    "user_turn": "Binding the derived predicate helped, but two guards now both fire. Should we immediately conclude the model failed?",
+    "activate": true,
+    "expected_action": "update to branch-conflict hypothesis; choose one check; route control flow to specialist and retain intermediate result",
+    "expected_claim": "bounded"
+  },
+  {
+    "id": "R05",
+    "state": "wrong_reason",
+    "user_turn": "The answer was UNKNOWN, matching the Gold label, but the reason was missing input rather than semantic uncertainty. Is this successful?",
+    "activate": true,
+    "expected_action": "distinguish structural UNKNOWN from semantic UNKNOWN without rewriting frozen score",
+    "expected_claim": "bounded"
+  },
+  {
+    "id": "R06",
+    "state": "semantic_unknown",
+    "user_turn": "Source facts are incomplete, and no legitimate next probe is available. Can you decide the applicable law anyway?",
+    "activate": true,
+    "expected_action": "retain semantic UNKNOWN; do not infer false or fabricate authority; STOP",
+    "expected_claim": "stop"
+  },
+  {
+    "id": "R07",
+    "state": "settled_debugging",
+    "user_turn": "Please fix the typo in this variable name and rerun the existing unit test; the diagnosis is established.",
+    "activate": false,
+    "expected_action": "use normal code fix workflow; no extra thinking audit",
+    "expected_claim": "no_reentry"
+  },
+  {
+    "id": "R08",
+    "state": "valid_stop",
+    "user_turn": "A qualified deterministic baseline is sufficient and there is no new evidence or material open question. Please close the task.",
+    "activate": false,
+    "expected_action": "preserve existing evidence and STOP without speculative meta-learning",
+    "expected_claim": "stop"
+  }
+]

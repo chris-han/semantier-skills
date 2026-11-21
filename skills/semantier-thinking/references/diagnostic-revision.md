@@ -1,0 +1,28 @@
+# Conditional diagnostic inquiry — attribution and revision
+
+**Load only when a material observation or user objection challenges a load-bearing inference and a specific diagnostic or cross-owner action could change the conclusion.** Use the current lead inquiry/decision task. Do not load for routine debugging with an established cause, a settled execution command, or a justified STOP. This is a reasoning handoff, **not** a debugging engine, automatic research retry, or authority to revise an experiment.
+
+## State-driven path (not an unconditional checklist)
+
+**Disputed inference → scoped question.** State the proposition being challenged, its scope, the actual observation and evidence basis. Distinguish failure of a *tested candidate* from failure of a *broader method*. Preserve original terminal results and source/reference/harness/version identities; later evidence may revise interpretation but not history. No new experiment is authorized merely by entering this reference. **If the user supplies a source observation or hypothetical contract, give a bounded conditional assessment on that basis without demanding access to extra files; distinguish user-reported premises from independently verified source.** Request unavailable originals only if actual source verification is essential to the requested claim, not as a prerequisite to reasoning about supplied facts.
+
+**Causal alternatives → one discriminating check.** Consider only explanations that would change the next decision. Where applicable distinguish missing or invalid evidence/reference, representation, predicate binding, branch/control flow, runtime execution, evaluator/scoring and the Agent's substantive reasoning. The fault can be multi-layer or UNRESOLVED. Do not presume a model failure to protect the architecture, or an interface failure to excuse a real model failure. **Inspect the existing candidate's contract/trace before suggesting a new model, benchmark, ablation, or larger experiment** when a cheaper direct diagnostic can discriminate the explanations. For each candidate intervention identify its predicted observation, what is held unchanged, and which explanations it would discriminate. Choose the smallest useful check or STOP. An aggregate success/UNKNOWN label is not causal evidence.
+
+**Specialist handoff → return observation.** If mechanical inspection, code repair, testing, research qualification, or compilation is needed, send the **existing owner/specialist** a compact handoff: exact claim, original evidence and exposure history, competing explanations, one requested observation/intervention, frozen factors, authorization/cost and what would cause return. Do not invent a second runtime or implementation authority. Require a return observation containing what actually changed, actual test/trace result, provenance, residual errors and affected vs unaffected claims. Do not ask the user to reproduce work that is directly accessible to the specialist.
+
+**Update → continue conditionally or STOP.** Compare the return observation with the prediction. If a minimal repair only partially works, revise causal attribution and consider the *single* remaining material discriminator; do not automatically iterate until a preferred hypothesis wins. Preserve unsuccessful intermediate steps, regression evidence, and the original frozen score. Once the question is sufficiently answered, evidence is unavailable, or added work has no decision value, STOP. A deterministic baseline that is sufficient may remain the best choice.
+
+## Guardrails for diagnostic meanings
+
+- **semantic UNKNOWN**: an input exists but its truth is undecidable; preserve it as undecidable.
+- **structural UNKNOWN**: required binding, factor, or reference is missing; never silently interpret missing as false or count a label match as semantic correctness.
+- **predicate name ≠ executable expression**: inspect declared inputs/producer and supported semantics before inferring `NOT`, `AND` or fallback from an identifier.
+- **mutually enabled branches**: inspect exclusivity and *declared* priority. Reordering guards or adding priority is a semantic intervention, not neutral name binding; identify its author and effects.
+- **post-hoc / exposed evaluation**: report diagnostic or regression evidence, not independent transfer. Do not rescore historical protected results under a later contract and call it the original outcome.
+- **human contribution**: a user's challenge, analyst repair, model proposal, and tool result are separately attributable. Never describe a human-directed fix as an autonomous Agent discovery.
+
+## Distinct learning target
+
+Object-level repair changes a particular task workflow, decision or artifact. **Meta-learning** would change the policy for how future failures are attributed, what evidence is sought, which intervention is chosen, or when the learning process stops. Record a proposed method change only when a clear reusable decision rule, triggering context and observed limitation emerge; route to its **existing learning-method owner**, not a new general store or auto-promotion mechanism. A single teaching episode can inspire a provisional procedure; only independently comparable new episodes can qualify general benefit. The research evaluator for a proposed learning policy must remain independent of the policy being tested.
+
+**Minimal return contract (carry in existing context):** original claim + result / competing explanations / exact check and unchanged factors / specialist return observation / revised *bounded* conclusion / STOP or one warranted next question. Refer to [evidence handoff](evidence-handoff.md) for material multi-step transfers. 

@@ -16,7 +16,7 @@ class SkillContractTests(unittest.TestCase):
     def test_source_identity_and_license(self):
         root = (BASE / "SKILL.md").read_text(encoding="utf-8")
         self.assertRegex(root, r"(?m)^name: semantier--semantier-thinking$")
-        self.assertRegex(root, r'(?m)^version: "0\.1\.1"$')
+        self.assertRegex(root, r'(?m)^version: "0\.1\.2"$')
         self.assertIn("Copyright (c) 2026 Semantier Technology", (BASE / "LICENSE").read_text())
         self.assertFalse((BASE / "plugin.yaml").exists(), "ordinary standalone skill must not masquerade as plugin")
 
@@ -43,7 +43,7 @@ class SkillContractTests(unittest.TestCase):
                 linked = file.parent / target
                 self.assertTrue(linked.is_file(), f"missing disclosure path {file}: {target}")
                 found.add(linked.resolve())
-        required = {BASE / "references" / f for f in ["depth-routing.md", "critical-inquiry.md", "decision-reasoning.md", "argument-writing.md", "ethical-reasoning.md", "organizational-reasoning.md", "evidence-handoff.md", "attribution-and-scope.md"]}
+        required = {BASE / "references" / f for f in ["depth-routing.md", "critical-inquiry.md", "decision-reasoning.md", "argument-writing.md", "ethical-reasoning.md", "organizational-reasoning.md", "evidence-handoff.md", "attribution-and-scope.md", "diagnostic-revision.md"]}
         self.assertTrue({f.resolve() for f in required}.issubset(found), "all task and specialist references must be linked")
 
     def test_depth_and_mode_are_independent(self):

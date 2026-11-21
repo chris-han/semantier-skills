@@ -8,7 +8,7 @@ A progressive critical-thinking skill for Semantier and compatible Hermes skill 
 
 **Skill ID (source):** `semantier/semantier/semantier-thinking`  
 **Installed name:** `semantier--semantier-thinking`  
-**Source version:** `0.1.1`  
+**Source version:** `0.1.2`  
 **Author / copyright:** Semantier Technology; see [LICENSE](LICENSE).
 
 ## How it works
@@ -33,6 +33,8 @@ Add **ethical reasoning** for material rights, duties or value conflicts and **o
 **Deliver** mode produces the requested answer or artifact. **Coach** mode guides the user's own thinking, normally one decision-relevant question at a time. Mode and depth are independent; a deep audit need not be a long interview.
 
 Depth can increase **or decrease** as evidence changes. Stop when the result is defensible within its declared scope or when further work cannot resolve a material uncertainty. Do not invent confidence scores, citations, causal certainty or ethical consensus.
+
+When a new observation challenges an earlier inference *mid-task*, the skill may conditionally re-enter inquiry. The [attribution and revision reference](references/diagnostic-revision.md) distinguishes observation from explanation, selects one discriminating check, hands mechanical changes to the existing specialist, and revises the conclusion using the returned evidence. It does not turn ordinary debugging into a second agent workflow, rewrite sealed results, or self-promote a learned method.
 
 ## Package contents
 
