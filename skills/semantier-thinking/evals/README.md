@@ -63,3 +63,19 @@ A FOLIO result measures **one narrow natural-language logical entailment task**,
 ## Native and live marketplace boundaries
 
 This is a standalone source skill under `skills/`, not a `plugins/` package. The legacy `marketplace/index.json` is intentionally unchanged: it is a plugin index. A future official release requires publisher identity `semantier`, slug `semantier-thinking`, root frontmatter name `semantier--semantier-thinking`, complete SHA-256 manifest, immutable package prefix, admitted Ed25519 publisher trust key, signed catalog and real OSS/HTTPS readback. GitHub source revision and ordinary CI are not substitutes for either Marketplace Gate 1 native Windows or Gate 2 live registry acceptance.
+
+### Native multi-turn v0.1.1 / v0.1.2 comparison
+
+The Runtime qualification plan owns the disposition, per-case adjudication and exact execution provenance. This directory supplies the frozen [cases and rubric](native_multiturn_cases.json) and [native runner](native_multiturn_qualification.py).
+
+Reproduce the apparatus with Linux Git, clean Hermes source from commit `691da21aa3f3842192b13e8ee73d9a9ec9ad9602`, that source's Python dependencies, and both historical Skill commits available in this Git checkout. The runner archives complete Skill packages from their immutable revisions. It starts an isolated Hermes home per process and records native tool starts, completions, denied requests, full turn history and HTTP attempts.
+
+```bash
+env -i PATH=/usr/bin:/bin "$HERMES_PYTHON" native_multiturn_qualification.py \
+  --hermes "$PINNED_HERMES_SOURCE" --route "$DEV_ROUTE_ENV_FILE" \
+  --arm B0 --preflight --output "$OUTPUT_DIR/preflight-B0.json"
+```
+
+Repeat offline preflight for B1. The input env file identifies the existing Beijing DashScope DEVELOPMENT route. Preflight uses an offline placeholder and blocks network requests. The live comparison used the same runner with `--preflight` omitted, one fresh process per `--case` and arm, and new output filenames. First run the separate `pilot` fixture in both arms, then use this historical order to reproduce the protocol: denominator B0/B1, binding B1/B0, layers B0/B1, ranking B1/B0, settled B0/B1, unknown B1/B0. The sealed case bundle is now exposed. A later replay measures repeatability of the protocol and does not produce fresh holdout evidence.
+
+**Disposition — THINKING_WEAK_SIGNAL_NOT_QUALIFIED.** On the four fresh positive cases, v0.1.1 passed 1/4 and v0.1.2 passed 2/4. Both passed the two boundary controls. Both received the native freight fixture response. v0.1.2 identified the field binding rather than inferring unsupported unit handling. Neither arm loaded the Thinking Skill for that case, and neither arm loaded `diagnostic-revision.md` anywhere in the sealed cohort. This is one case-level difference with no demonstrated mechanism attribution or qualification. See the archived Runtime plan at <https://github.com/chris-han/semantier-runtime/blob/main/docs/plans/archive/2026-11-21-semantier-thinking-v012-native-multiturn-attribution-eval-mvl-v1.md>.
