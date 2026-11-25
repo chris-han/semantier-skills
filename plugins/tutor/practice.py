@@ -59,3 +59,29 @@ def next_review(at: datetime, knowledge_type: str, review_round: int) -> datetim
         raise ValueError("unsupported knowledge type")
     days = intervals[min(review_round, len(intervals) - 1)]
     return at.astimezone(timezone.utc) + timedelta(days=days)
+
+
+def passage_recall(passage, *, evidence_ref, language, seed):
+    """Prepare a literal-recall question whose key is computable from its citation."""
+    from hashlib import sha256
+    import re
+
+    # Retain the original spelling and spacing in the displayed passage.
+    spans = list(re.finditer(r"[A-Za-z][A-Za-z'-]*|[0-9]+|[\u3400-\u9fff]{1,4}", passage))
+    if len(spans) < 3:
+        raise ValueError("TUTOR_PASSAGE_TOO_SHORT")
+    index = int.from_bytes(sha256(seed.encode()).digest()[:8], "big")
+    target = spans[1 + index % (len(spans) - 1)]
+    answer = target.group()
+    alternatives = [match.group() for match in spans if match.group().casefold() != answer.casefold()]
+    if not alternatives:
+        raise ValueError("TUTOR_DISTINCT_CHOICES_REQUIRED")
+    other = alternatives[index % len(alternatives)]
+    key = "B" if index % 2 else "A"
+    choices = (("A", answer), ("B", other)) if key == "A" else (("A", other), ("B", answer))
+    start, end = target.span()
+    excerpt = passage[max(0, start - 140):start] + "____" + passage[end:end + 140]
+    chinese = language.lower().startswith("zh")
+    stem = ("原文空缺处是哪一项？" if chinese else "Which option completes the quoted passage?") + "\n" + excerpt
+    rationale = ("原文写的是" if chinese else "The source reads ") + "“" + passage[max(0,start-40):end+40] + "”."
+    return ChoiceExercise(stem, choices, key, rationale, (evidence_ref,))
