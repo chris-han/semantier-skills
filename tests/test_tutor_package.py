@@ -21,8 +21,8 @@ class PackageTests(unittest.TestCase):
             def call_mcp(self, server, operation, args):
                 assert (server, operation) == ("semantier_tutor", "tutor_progress")
                 return {"ok": True, "structuredContent": {"objectives": [
-                    {"status": "current", "assessments": [
-                        {"result": "correct", "assistance": "independent", "assessment": "assessment:1"},
+                    {"status": "current", "knowledge_type": "concept", "assessments": [
+                        {"result": "correct", "assistance": "independent", "assessment": "assessment:1", "submitted_at": "2026-11-25T12:00:00+00:00"},
                         {"result": "correct", "assistance": "hinted", "assessment": "assessment:2"},
                     ]},
                     {"status": "evidence_unavailable", "assessments": []},
@@ -38,6 +38,7 @@ class PackageTests(unittest.TestCase):
         result = json.loads(tools["tutor_progress"]["handler"]({"project_ref": "p", "plan_ref": "l"}))
         current, unavailable = [item["mastery"] for item in result["objectives"]]
         self.assertEqual(current["estimate"], 0.5)
+        self.assertEqual(current["next_review_at"], "2026-11-28T12:00:00+00:00")
         self.assertEqual(current["contributing_assessments"], ["assessment:1"])
         self.assertIsNone(unavailable["estimate"])
 
