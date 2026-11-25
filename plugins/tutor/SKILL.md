@@ -13,6 +13,8 @@ Use tutor_progress when resuming an existing plan. Use tutor_plan for a new goal
 
 ## Workflow
 
+For English teaching turns, follow [the teaching instructions](prompts/teaching.en.md). 中文辅导使用[中文教学说明](prompts/teaching.zh.md)。
+
 Let the learner select the material and adjust or defer objectives. Use tutor_teach for an explanation or hint, then tutor_practice to present a frozen exercise. Wait for an answer. Use tutor_submit for the learner's actual submission. When a learner asks about the evidence, open the cited entry under their current access.
 
 ## Tool use
