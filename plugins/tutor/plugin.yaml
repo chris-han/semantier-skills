@@ -1,0 +1,5 @@
+name: tutor
+version: 0.1.0
+description: Source-grounded learning plans, guided practice and evidence-linked progress.
+author: Semantier
+kind: standalone
