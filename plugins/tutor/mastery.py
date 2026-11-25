@@ -30,3 +30,20 @@ def compute_mastery(correctness: list[bool | float]) -> float:
 
 
 __all__ = ["compute_mastery"]
+
+
+def objective_progress(objective):
+    """Project only current, independently graded attempts into the estimate."""
+    if objective["status"] != "current":
+        return {"estimate": None, "status": "evidence_unavailable", "contributing_assessments": []}
+    assessments = objective["assessments"]
+    eligible = [item for item in assessments if item["result"] in {"correct", "incorrect"}
+                and item["assistance"] == "independent"]
+    recent = eligible[-len(_RECENCY_WEIGHTS):]
+    return {
+        "status": "estimated" if recent else "not_demonstrated",
+        "estimate": compute_mastery([item["result"] == "correct" for item in recent]) if recent else None,
+        "independent_evidence_count": len(eligible),
+        "assisted_attempt_count": sum(item["assistance"] == "hinted" for item in assessments),
+        "contributing_assessments": [item["assessment"] for item in recent],
+    }
