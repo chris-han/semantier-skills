@@ -1,7 +1,7 @@
 ---
 name: tutor
 description: Learn from selected project material, practice an objective, submit an answer, or resume a learning plan.
-version: 0.1.0
+version: 0.1.1
 author: Semantier
 ---
 

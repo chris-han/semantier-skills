@@ -64,6 +64,15 @@ class PackageTests(unittest.TestCase):
         source["locator"]["selector"]["exact_quote"] += " The note records an inference."
         self.assertEqual(grade_frozen_choice(exercise, "A")["result"], "ungraded")
 
+    def test_recall_options_cannot_collide_with_answer_labels(self):
+        from plugins.tutor.practice import passage_recall, supported_recall_key
+
+        passage = "A learner moves a weight from tray A to tray B."
+        for seed in range(64):
+            ex = passage_recall(passage, language="en", evidence_ref="entry:1", seed=str(seed))
+            self.assertEqual(supported_recall_key(ex.stem, ex.options, (passage,)), ex.key)
+            self.assertTrue(all(body.casefold() not in {"a", "b"} for _, body in ex.options))
+
     def test_immutable_choice_mapping(self):
         exercise = ChoiceExercise("Which?", (("B", "Prime"), ("A", "Composite")), "B", "Two divisors", ("entry:1",))
         self.assertEqual(exercise.grade("prime"), "correct")

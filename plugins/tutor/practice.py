@@ -81,9 +81,13 @@ def passage_recall(passage, *, evidence_ref, language, seed):
     if len(spans) < 3:
         raise ValueError("TUTOR_PASSAGE_TOO_SHORT")
     index = int.from_bytes(sha256(seed.encode()).digest()[:8], "big")
-    target = spans[1 + index % (len(spans) - 1)]
+    # Responses accept both a label and the option text. Reserve both labels.
+    eligible = [match for match in spans if match.group().casefold() not in {"a", "b"}]
+    if len(eligible) < 2:
+        raise ValueError("TUTOR_DISTINCT_CHOICES_REQUIRED")
+    target = eligible[1 + index % (len(eligible) - 1)]
     answer = target.group()
-    alternatives = [match.group() for match in spans if match.group().casefold() != answer.casefold()]
+    alternatives = [match.group() for match in eligible if match.group().casefold() != answer.casefold()]
     if not alternatives:
         raise ValueError("TUTOR_DISTINCT_CHOICES_REQUIRED")
     other = alternatives[index % len(alternatives)]
