@@ -50,6 +50,20 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(current["contributing_assessments"], ["assessment:1"])
         self.assertIsNone(unavailable["estimate"])
 
+    def test_citation_must_support_the_frozen_key(self):
+        from plugins.tutor.tools import grade_frozen_choice
+
+        source = {"evidence": {"artifact_ref": "entry:1"},
+                  "locator": {"selector": {"exact_quote": "The note records an observation."}}}
+        exercise = {"question": "Complete the passage.\nThe note records an ____.",
+                    "choices": [("A", "observation"), ("B", "inference")],
+                    "rubric": {"key": "B", "rationale": "See the passage", "sources": [source]}}
+        self.assertEqual(grade_frozen_choice(exercise, "B")["result"], "ungraded")
+        exercise["rubric"]["key"] = "A"
+        self.assertEqual(grade_frozen_choice(exercise, "A")["result"], "correct")
+        source["locator"]["selector"]["exact_quote"] += " The note records an inference."
+        self.assertEqual(grade_frozen_choice(exercise, "A")["result"], "ungraded")
+
     def test_immutable_choice_mapping(self):
         exercise = ChoiceExercise("Which?", (("B", "Prime"), ("A", "Composite")), "B", "Two divisors", ("entry:1",))
         self.assertEqual(exercise.grade("prime"), "correct")

@@ -3,7 +3,7 @@
 import json
 from .mastery import objective_progress
 from .teaching import teaching_turn
-from .practice import ChoiceExercise, passage_recall
+from .practice import ChoiceExercise, passage_recall, supported_recall_key
 
 
 def grade_frozen_choice(exercise, answer):
@@ -11,6 +11,11 @@ def grade_frozen_choice(exercise, answer):
     choice = ChoiceExercise(exercise["question"], tuple(tuple(pair) for pair in exercise["choices"]),
                             rubric["key"], rubric["rationale"],
                             tuple(source["evidence"]["artifact_ref"] for source in rubric["sources"]))
+    passages = [source["locator"]["selector"].get("exact_quote") for source in rubric["sources"]
+                if source.get("locator") and source["locator"].get("selector")]
+    supported = supported_recall_key(choice.stem, choice.options, tuple(p for p in passages if p))
+    if supported is None or supported != choice.key:
+        return {"result": "ungraded", "feedback": "The cited passage does not establish the frozen answer key."}
     result = choice.grade(answer)
     feedback = rubric["rationale"] if result != "ungraded" else "Choose one unambiguous option."
     return {"result": result, "feedback": feedback}

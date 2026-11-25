@@ -61,6 +61,16 @@ def next_review(at: datetime, knowledge_type: str, review_round: int) -> datetim
     return at.astimezone(timezone.utc) + timedelta(days=days)
 
 
+def supported_recall_key(question, choices, passages):
+    """Resolve the unique option that reconstructs a verbatim source excerpt."""
+    _, separator, excerpt = question.partition("\n")
+    if not separator or excerpt.count("____") != 1:
+        return None
+    keys = [label for label, body in choices
+            if any(excerpt.replace("____", body, 1) in passage for passage in passages)]
+    return keys[0] if len(keys) == 1 else None
+
+
 def passage_recall(passage, *, evidence_ref, language, seed):
     """Prepare a literal-recall question whose key is computable from its citation."""
     from hashlib import sha256
@@ -84,4 +94,6 @@ def passage_recall(passage, *, evidence_ref, language, seed):
     chinese = language.lower().startswith("zh")
     stem = ("原文空缺处是哪一项？" if chinese else "Which option completes the quoted passage?") + "\n" + excerpt
     rationale = ("原文写的是" if chinese else "The source reads ") + "“" + passage[max(0,start-40):end+40] + "”."
+    if supported_recall_key(stem, choices, (passage,)) != key:
+        raise ValueError("TUTOR_AMBIGUOUS_SOURCE_SUPPORT")
     return ChoiceExercise(stem, choices, key, rationale, (evidence_ref,))

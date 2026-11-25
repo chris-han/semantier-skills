@@ -3,7 +3,7 @@ OPERATIONS = {
     "tutor_plan": ("Create or edit a learning path.", ("project_ref", "artifact", "preparation", "objectives", "goal", "request_id", "expected_revision", "language"), ("plan_ref",)),
     "tutor_teach": ("Explain an objective or give a requested hint.", ("project_ref", "plan_ref", "objective_ref", "request_id", "session_id", "expected_revision"), ("question", "exercise_ref")),
     "tutor_practice": ("Prepare a source-grounded exercise.", ("project_ref", "plan_ref", "objective_ref", "expected_revision", "request_id"), ()),
-    "tutor_submit": ("Assess a learner submission against its frozen exercise.", ("project_ref", "plan_ref", "exercise_ref", "answer", "expected_revision", "request_id"), ()),
+    "tutor_submit": ("Assess a learner submission against its frozen exercise.", ("project_ref", "plan_ref", "exercise_ref", "answer", "expected_revision", "request_id"), ("learner_assistance",)),
     "tutor_progress": ("Resume an authorized learning plan.", ("project_ref", "plan_ref"), ()),
 }
 
@@ -17,6 +17,7 @@ def parameters_for(required, optional):
     }, "required": ["artifact_kind", "artifact_ref", "artifact_hash"], "additionalProperties": False}
     fields = {
         "expected_revision": {"type": "integer", "minimum": 0},
+        "learner_assistance": {"type": "string", "enum": ["independent", "hinted"]},
         "artifact": pin, "preparation": pin,
         "objectives": {"type": "array", "minItems": 1, "items": {
             "type": "object", "properties": {
