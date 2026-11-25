@@ -2,6 +2,7 @@
 
 import json
 from .mastery import objective_progress
+from .teaching import teaching_turn
 from .practice import ChoiceExercise, passage_recall
 
 
@@ -21,6 +22,8 @@ def tool_handler(ctx, operation):
         # The callable is supplied out of band and cannot be expressed in JSON.
         if tutor_core is None:
             response = ctx.call_mcp("semantier_tutor", operation, args)
+        elif operation == "tutor_teach":
+            response = {"ok": True, "structuredContent": tutor_core(operation, args, teach=teaching_turn)}
         elif operation == "tutor_practice":
             response = {"ok": True, "structuredContent": tutor_core(operation, args, prepare=passage_recall)}
         elif operation == "tutor_submit":

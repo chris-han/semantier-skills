@@ -35,6 +35,14 @@ class PackageTests(unittest.TestCase):
             path = f"prompts/teaching.{language}.md"
             self.assertIn(path, skill.read_text())
             self.assertTrue((skill.parent / path).is_file())
+        def core(operation, args, *, teach):
+            self.assertEqual(operation, "tutor_teach")
+            return teach(language="zh-CN", objective="观察", question="为什么？", passages={"E1": "一段材料"})
+
+        response = tools["tutor_teach"]["handler"]({}, tutor_core=core)
+        system, user = json.loads(response)["structuredContent"]
+        self.assertEqual(system["content"], (skill.parent / "prompts/teaching.zh.md").read_text())
+        self.assertEqual(json.loads(user["content"])["passages"], {"E1": "一段材料"})
         result = json.loads(tools["tutor_progress"]["handler"]({"project_ref": "p", "plan_ref": "l"}))
         current, unavailable = [item["mastery"] for item in result["objectives"]]
         self.assertEqual(current["estimate"], 0.5)
