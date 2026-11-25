@@ -199,6 +199,27 @@
       "trust_level": "community",
       "homepage": "https://github.com/chris-han/semantier-skills/tree/main/plugins/business_answers",
       "repo": "https://github.com/chris-han/semantier-skills"
+    },
+    {
+      "id": "chris-han/semantier-skills/plugins/tutor",
+      "name": "tutor",
+      "version": "0.1.1",
+      "type": "plugin",
+      "path": "plugins/tutor",
+      "description": "Learn from selected project passages, practice and resume source-linked assessments.",
+      "author": "Semantier",
+      "category": "Education",
+      "tags": [
+        "learning",
+        "assessment",
+        "tutor"
+      ],
+      "source": "custom-marketplace",
+      "trust_level": "community",
+      "homepage": "https://github.com/chris-han/semantier-skills/tree/6e1e668bdad981de6edc2a97cfa95c16ee23a26a/plugins/tutor",
+      "repo": "https://github.com/chris-han/semantier-skills",
+      "package_ref": "6e1e668bdad981de6edc2a97cfa95c16ee23a26a",
+      "content_hash": "sha256:61375f2c599edc839adc12dd73e792aec120541f962247c9352ee09eb819ddea"
     }
   ]
 }
